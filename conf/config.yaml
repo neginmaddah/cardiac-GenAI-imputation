@@ -1,0 +1,41 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# Root configuration. Everything else is composed from here.
+#
+# Every parameter the benchmark uses lives under conf/. No path, seed, target
+# name or hyperparameter is written down anywhere else, which is what makes a
+# run reproducible from this directory alone.
+#
+#   python pipeline/01_harmonise.py
+#   python pipeline/02_build_masks.py
+#   ...  see README.md for the full stage order
+# ═════════════════════════════════════════════════════════════════════════════
+
+defaults:
+  - paths
+  - variables
+  - harmonise
+  - label_aliases
+  - variable_types
+  - masking
+  - missingness
+  - inputs
+  - results_v2
+  - fidelity
+  - prediction
+  - stats
+  - reporting
+  - imputation/_base
+  - imputation/mean
+  - imputation/knn
+  - imputation/mice
+  - imputation/missranger
+  - imputation/miwae
+  - imputation/gain
+  - imputation/miracle
+  - imputation/remasker
+  - cohorts/cohort1
+  - cohorts/cohort2
+  - experiment/v2
+
+seed: 2025
+log_level: INFO

@@ -1,0 +1,200 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# Figure and table registry — ONE canonical generator per artifact.
+#
+# This file exists because there was previously no single reproducible entry
+# point: the 9 main + 6 supplementary figures required running FOUR scripts in
+# mtime order, two of them living under `test_*/`, and Figure_8.png had three
+# candidate generators that disagreed about which metric to plot. That is
+# exactly how a figure came to be the MLPE variant while its own caption,
+# the Methods' declared primary metric and every Friedman test described
+# standardized RMSE.
+#
+# Rules enforced by cvd/reporting:
+#   1. Exactly one generator may declare each output path. A second claim is a
+#      configuration error, not a last-writer-wins race.
+#   2. Every generator declares its inputs, so the DAG can order it and detect
+#      a stale artifact.
+#   3. `metric` is declared here and asserted against the axis label the
+#      generator actually draws.
+# ═════════════════════════════════════════════════════════════════════════════
+
+defaults:
+  dpi: 300
+  format: png
+  font_scale: 1.5625        # fidelity figures
+  compact_font_scale: 1.25  # compact v4 prediction figures
+  star_marker_size: 337.5           # 150 * 1.5^2
+  legend_star_marker_size: 292.5    # 130 * 1.5^2
+  # Captions must not claim a notch: `notch` is never set in the plotting code
+  # and the boxes are not notched. "(with notch)" was removed from Figures
+  # 5, 6, 8 and 9 in round 5.
+  boxplot_notch: false
+
+# ── Main figures ───────────────────────────────────────────────────────────
+figures:
+  Figure_1:
+    section: "Figure 1"
+    generator: pipeline/07d_schematic.py
+    inputs: []
+    output: "${paths.paper.figures_v2_dir}/Figure_1.png"
+    caption_must_state:
+      cohort_sizes: { Cohort1: 10159, Cohort2: 3875 }
+      predictor_counts: { Cohort1: 178, Cohort2: 178 }
+      designs: 2
+      mechanisms: [MCAR, MNAR]
+      intensities: 2
+      intensity_percentages: [5, 20]
+      imputers: 8
+      reference_arms: 1
+      stochastic_ensemble_size: 2
+      binary_endpoints: [afibproc, complics, cpvntlng]
+      continuous_endpoints: [icuinhrs, ppef]
+
+  Figure_2:
+    section: "Results 2.1 / 2.2 - Data Fidelity (Cohort1)"
+    generator: pipeline/07a_fidelity_figures.py
+    args: { cohort: Cohort1 }
+    inputs: ["${results_v2.fidelity_dir}"]
+    output: "${paths.paper.figures_v2_dir}/Figure_2.png"
+    metric: { categorical: balanced_accuracy, continuous: rmse }
+    ranking: within_cohort_friedman_mean_rank
+
+  Figure_3:
+    section: "Results 2.1 / 2.2 - Data Fidelity (Cohort2)"
+    generator: pipeline/07a_fidelity_figures.py
+    args: { cohort: Cohort2 }
+    inputs: ["${results_v2.fidelity_dir}"]
+    output: "${paths.paper.figures_v2_dir}/Figure_3.png"
+    metric: { categorical: balanced_accuracy, continuous: rmse }
+    ranking: within_cohort_friedman_mean_rank
+
+  Figure_4:
+    section: "Results 2.3 / 2.6 - binary endpoint distributions"
+    generator: pipeline/07c_endpoint_figures.py
+    inputs: [binary_prediction_results]
+    output: "${paths.paper.figures_dir}/Figure_4.png"
+    panels: { a: Cohort1, b: Cohort2 }
+    targets: analysed_binary          # the 3 retained endpoints, not 4
+
+  Figure_5:
+    section: "Results 2.3 - binary compact summary (Cohort1)"
+    generator: pipeline/07b_prediction_figures.py
+    args: { cohort: Cohort1 }
+    inputs: [binary_prediction_results]
+    output: "${paths.paper.figures_dir}/Figure_5.png"
+    metric: [balanced_accuracy, auprc]
+    relative_to: baseline_median
+    targets: analysed_binary
+    n_results_per_method: 27          # 3 targets x 3 intensities x 3 splits
+
+  Figure_6:
+    section: "Results 2.3 / 2.6 - binary compact summary (Cohort2)"
+    generator: pipeline/07b_prediction_figures.py
+    args: { cohort: Cohort2 }
+    inputs: [binary_prediction_results]
+    output: "${paths.paper.figures_dir}/Figure_6.png"
+    metric: [balanced_accuracy, auprc]
+    relative_to: baseline_median
+    targets: analysed_binary
+    n_results_per_method: 27
+
+  Figure_7:
+    section: "Results 2.4 / 2.6 - continuous endpoint distributions"
+    generator: pipeline/07c_endpoint_figures.py
+    inputs: [continuous_prediction_results]
+    output: "${paths.paper.figures_dir}/Figure_7.png"
+    panels: { a: Cohort1, b: Cohort2 }
+    targets: analysed_continuous      # the 3 post-operative durations
+    # NOT protected, unlike Figures 2 and 3. Protection freezes bytes when the
+    # content is already correct; here the submitted PNG was CONTENT-stale --
+    # it drew all five continuous targets, naming the two set-aside
+    # intra-operative durations in its panel titles, which the round-5 rescope
+    # forbids in the main text and which its own caption already contradicted.
+    # Regenerated 2026-09-10 with the three analysed endpoints.
+
+  Figure_8:
+    section: "Results 2.4 - continuous compact summary (Cohort1)"
+    generator: pipeline/07b_prediction_figures.py
+    args: { cohort: Cohort1 }
+    inputs:
+      - ${paths.legacy.continuous_v2.grid}
+      - ${paths.legacy.continuous_v2.icuadhrs}
+    output: "${paths.paper.figures_dir}/Figure_8.png"
+    # ⚠ MUST be rmse_z, not MLPE. The submitted round-2 file was the MLPE
+    #   variant (2 endpoints) while its caption, the Methods' declared primary
+    #   metric and every Friedman test described standardized RMSE over five.
+    #   Decisive check: the round-2 Cohort2 caption ("no non-baseline imputer
+    #   below the Baseline median") is EXACTLY true for rmse_z and false for
+    #   MLPE, so the caption was written for RMSE and the figure had been
+    #   swapped underneath it.
+    metric: [rmse_z, r2]
+    relative_to: baseline_median
+    targets: analysed_continuous
+    n_results_per_method: 27
+
+  Figure_9:
+    section: "Results 2.4 / 2.6 - continuous compact summary (Cohort2)"
+    generator: pipeline/07b_prediction_figures.py
+    args: { cohort: Cohort2 }
+    inputs:
+      - ${paths.legacy.continuous_v2.grid}
+      - ${paths.legacy.continuous_v2.icuadhrs}
+    output: "${paths.paper.figures_dir}/Figure_9.png"
+    metric: [rmse_z, r2]
+    relative_to: baseline_median
+    targets: analysed_continuous
+    n_results_per_method: 27
+
+# ── Supplementary figures ──────────────────────────────────────────────────
+# The supplement carries no figures. Every per-target figure it used to hold was
+# rendered from the superseded v1 trees and reported endpoints that are no longer
+# analysed; the detail they carried is now in the ranking tables below, which are
+# generated from results_v2/ and can be regenerated in one command.
+supp_figures: {}
+
+# ── Supplementary tables ───────────────────────────────────────────────────
+# Numbered in document order. Every entry is v2-native: the generators read
+# results_v2/ and write to paper/tables/. S-numbers are NOT hard-coded
+# in main.tex any more -- main.tex imports supplementary.aux via
+# \externaldocument and refers to these by \label, so inserting or removing a
+# table here can no longer silently break a citation.
+supp_tables:
+  S1:
+    generator: pipeline/08a_ranking_tables.py
+    output: "${paths.paper.tables_dir}/table_fidelity_rankings.tex"
+    label: tab:fidelity_rankings
+  S2:
+    generator: pipeline/08a_ranking_tables.py
+    output: "${paths.paper.tables_dir}/table_fidelity_mean_ranks.tex"
+    label: tab:fidelity_mean_ranks
+  S3:
+    generator: pipeline/08a_ranking_tables.py
+    output: "${paths.paper.tables_dir}/table_prediction_rankings.tex"
+    label: tab:prediction_rankings
+  S4:
+    generator: pipeline/08a_ranking_tables.py
+    output: "${paths.paper.tables_dir}/table_prediction_mean_ranks.tex"
+    label: tab:prediction_mean_ranks
+  S5:
+    generator: pipeline/08a_ranking_tables.py
+    output: "${paths.paper.tables_dir}/table_prediction_pairwise.tex"
+    label: tab:prediction_pairwise
+  S6:
+    generator: pipeline/08a_ranking_tables.py
+    output: "${paths.paper.tables_dir}/table_prediction_per_target.tex"
+    label: tab:prediction_per_target
+  S7:
+    generator: pipeline/08a_ranking_tables.py
+    output: "${paths.paper.tables_dir}/table_error_profile.tex"
+    label: tab:error_profile
+  S8:
+    generator: pipeline/08b_taxonomy_tables.py
+    output: "${paths.paper.tables_dir}/table_leakage_exclusions.tex"
+    label: tab:leakage
+  S9:
+    generator: pipeline/08b_taxonomy_tables.py
+    output: "${paths.paper.tables_dir}/table_variable_taxonomy.tex"
+    label: tab:variable_taxonomy
+  # No S10. The intra-operative timing table was dropped from the supplement on
+  # 2026-09-12; the generator still computes it into the retired artifact tree as the
+  # evidence behind the timing prose, but it is not a numbered table any more.

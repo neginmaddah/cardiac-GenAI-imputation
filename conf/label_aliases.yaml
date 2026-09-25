@@ -1,0 +1,312 @@
+# Label harmonisation and category simplification.
+#
+# Paper section: Methods 4.1. Implements the re-run plan: make the two
+# cohorts' category domains identical, and simplify multi-level categoricals the
+# way the original notebooks did -- but once, declaratively, and applied to BOTH
+# cohorts instead of each notebook inventing its own collapse.
+#
+# Every map below is applied to both cohorts. A value absent from a cohort is a
+# no-op there, so a `groups` entry is safe even when only one registry uses the
+# variant. Maps run AFTER `missing_tokens` (so "Unknown"/"Not documented" are
+# already NaN) and BEFORE encoding.
+#
+# The audit found 111 of 330 shared labelled columns disagreed on their label
+# set. 91 of those were pure subset relations that need no entry here -- the
+# category domain is the union of both cohorts. This file resolves the 20
+# genuine conflicts plus the simplifications the re-run plan asks for.
+
+groups:
+
+  # --- 1. Pure formatting variants -------------------------------------------
+
+  - note: "Stenosis bands: Cohort1 writes '50 - 69%', Cohort2 '50-69%'."
+    columns: [circdiststenpercent, laddiststenpercent, ramusstenpercent,
+              rcadiststenpercent]
+    map:
+      "50 - 69%": "50-69%"
+
+  - note: >
+      Carotid stenosis. Cohort1 has both '100%' and '100 %'; Cohort2 writes '1',
+      i.e. the fraction 1.0 meaning total occlusion.
+    columns: [cvdstenlft, cvdstenrt]
+    map:
+      "100 %": "100%"
+      "1": "100%"
+
+  - note: "Cohort2's 'Yes' variant is missing Cohort1's trailing period."
+    columns: [riskdiscussed]
+    map:
+      "Yes, STS risk calculator score was calculated and discussed with the patient/family prior to surgery as documented in the medical record": "Yes"
+      "Yes, STS risk calculator score was calculated and discussed with the patient/family prior to surgery as documented in the medical record.": "Yes"
+      "No, STS risk calculator score was available for the scheduled procedure but not discussed with the patient/family prior to surgery or discussion was not documented.": "No"
+      "NA, not applicable (emergent or salvage case, or no risk model available for this procedure)": "NotApplicable"
+
+  - note: "Case variants."
+    columns: [cabdistpos01, cabdistpos02, cabdistpos03, cabdistpos04,
+              cabdistpos05, cabdistpos06]
+    map:
+      "End to side": "End to Side"
+      "Sequential (side to side)": "Side to Side"
+
+  - note: "Cohort1 spells the window out, Cohort2 abbreviates."
+    columns: [arrhythaflutter, arrhythatrfib, arrhyththird, arrhythvv]
+    map:
+      "Recent (<= 30 days preop)": "Recent"
+      "Remote (> 30 days preop)": "Remote"
+
+  - columns: [cvawhen]
+    map:
+      "<=30 Days": "<= 30 days"
+      ">30 Days": "> 30 days"
+
+  - columns: [prepar, prepmr, preptr]
+    map:
+      "Trace/trivial": "Trivial/Trace"
+
+  - columns: [diabctrl]
+    map:
+      "Other subcutaneous medication": "Other SubQ"
+
+  - columns: [leftima, rightima]
+    map:
+      "No / NA": "No"
+
+  # --- 2. Granularity mismatches ---------------------------------------------
+
+  - note: >
+      Procedure identifier. Cohort1 uses descriptive names, Cohort2 appends the STS
+      ProcId code. Collapsed onto the STS short names.
+    columns: [procid]
+    map:
+      "CAB Only": "Isolated CAB"
+      "Isolated CAB [ProcId = 1]": "Isolated CAB"
+      "AV Replacement": "Isolated AVR"
+      "Isolated AVR [ProcId = 2]": "Isolated AVR"
+      "MV Replacement Only": "Isolated MVR"
+      "Isolated MVR [ProcId = 3]": "Isolated MVR"
+      "AV Replacement + CAB": "AVR + CAB"
+      "AVR + CAB [ProcId = 4]": "AVR + CAB"
+      "MV Replacement + CAB": "MVR + CAB"
+      "MVR + CAB [ProcId = 5]": "MVR + CAB"
+      "AV Replacement + MV Replacement": "AVR + MVR"
+      "AVR + MVR [ProcId = 6]": "AVR + MVR"
+      "MV Repair [ProcId = 7]": "MV Repair"
+      "MV Repair + CAB [ProcId = 8]": "MV Repair + CAB"
+
+  - note: >
+      Distal anastomosis site. Cohort1 records finer branches (Diagonal 1/2,
+      Obtuse Marginal 1/2/3, Prox/Mid/Distal LAD) than Cohort2. Collapsed to the
+      coarser set both registries share.
+    columns: [cabdistsite01, cabdistsite02, cabdistsite03, cabdistsite04,
+              cabdistsite05, cabdistsite06]
+    map:
+      "Acute Marginal (AM)": "Acute Marginal"
+      "Diagonal 1": "Diagonal"
+      "Diagonal 2": "Diagonal"
+      "Diagonal 3": "Diagonal"
+      "Prox LAD": "LAD"
+      "Mid LAD": "LAD"
+      "Distal LAD": "LAD"
+      "Obtuse Marginal 1": "Obtuse Marginal"
+      "Obtuse Marginal 2": "Obtuse Marginal"
+      "Obtuse Marginal 3": "Obtuse Marginal"
+      "Posterior Descending (PDA)": "PDA"
+      "Posterolateral (PLB)": "Posterior Lateral"
+      "Left Main Coronary Artery (LMCA)": "Left Main"
+      "Ramus": "Ramus Intermedius"
+
+  - note: "Conduit type. 'In Situ LIMA/RIMA' is Cohort1's finer split of 'In-situ IMA'."
+    columns: [cabconduit01, cabconduit02, cabconduit03, cabconduit04,
+              cabconduit05, cabconduit06]
+    map:
+      "In Situ LIMA": "In-situ IMA"
+      "In Situ RIMA": "In-situ IMA"
+      "Vein graft": "Vein"
+      "Synthetic graft": "Other"
+
+  - note: "Proximal anastomosis site."
+    columns: [cabproximalsite01, cabproximalsite02, cabproximalsite03,
+              cabproximalsite04, cabproximalsite05, cabproximalsite06]
+    map:
+      "Ascending aorta": "Aorta"
+      "Descending aorta": "Other"
+      "In Situ Mammary": "In-situ IMA"
+      "T-graft off LIMA": "T graft off artery"
+      "T-graft off RIMA": "T graft off artery"
+      "T-graft off Radial": "T graft off artery"
+      "T-graft off SVG": "T graft off vein"
+      "Natural Y vein graft": "T graft off vein"
+
+  - note: >
+      Lowest-temperature probe site. 'Pulmonary Artery' is Cohort1-only;
+      'Tympanic' and the oxygenator outlet are Cohort2-only. All are rare and
+      fold into 'Other' so the domain matches.
+    columns: [lwsttempsrc]
+    map:
+      "Pulmonary Artery": "Other"
+      "Tympanic": "Other"
+      "Oxygenator arterial outlet blood (CPB Arterial Blood)": "Other"
+
+  - note: "Cohort1 records two repair variants; Cohort2 records a removal variant."
+    columns: [oppulm]
+    map:
+      "Reconstruction": "Repair/Reconstruction"
+      "Repair / Leaflet Reconstruction": "Repair/Reconstruction"
+      "Pannus or Thrombus removal": "Other"
+
+  # --- 3. Simplifications (the re-run plan) ----------------------------------
+  # These mirror what the original notebooks did, applied uniformly.
+
+  - note: >
+      Planned/unplanned detail on "was this procedure performed". Both
+      notebooks collapsed this; doing it here makes the two cohorts agree and
+      turns these into clean binaries.
+    columns: [opcab, opocard, oponcard, aortproc, vsav, vsmv, vstv, vspv,
+              vsavao, approachcon, ocaracdle, onccaren, oncother, oncothor,
+              oncovasc]
+    map:
+      "Yes, planned": "Yes"
+      "Yes, unplanned": "Yes"
+      "Yes, unplanned due to surgical complication": "Yes"
+      "Yes, unplanned due to unsuspected disease or anatomy": "Yes"
+
+  - note: "Graft-count flags: the two registries word the same thing differently."
+    columns: [cab02, cab03, cab04, cab05, cab06, cab07]
+    map:
+      "Additional Grafts": "Yes"
+      "No Additional Grafts": "No"
+
+  - note: "Clotting factor product name is not analytically useful."
+    columns: [intraclotfact]
+    map:
+      "Yes, Composite": "Yes"
+      "Yes, FEIBA": "Yes"
+      "Yes, Factor VIII": "Yes"
+      "Yes, Factor VIIa": "Yes"
+
+  - columns: [carshock]
+    map:
+      "Yes - At the time of the procedure": "Yes"
+      "Yes, not at the time of the procedure but within prior 24 hours": "Yes"
+
+  - columns: [resusc]
+    map:
+      "Yes - Within 1 hour of the start of the procedure": "Yes"
+      "Yes - More than 1 hour but less than 24 hours of the start of the procedure": "Yes"
+
+  - columns: [medamiodarone]
+    map:
+      "Yes, on home therapy": "Yes"
+      "Yes, therapy started this admission": "Yes"
+
+  - columns: [hmo2]
+    map:
+      "Yes, PRN": "Yes"
+      "Yes, oxygen dependent": "Yes"
+
+  - columns: [ibldprod]
+    map:
+      "No, not given": "No"
+
+  - columns: [tobaccouse]
+    map:
+      "Current every day smoker": "Current smoker"
+      "Current some day smoker": "Current smoker"
+      "Smoker, current status (frequency) unknown": "Current smoker"
+
+  - note: "Recent/Remote IV drug use folds into current use; 'Yes' is undated."
+    columns: [ivdrugab]
+    map:
+      "Recent": "Yes"
+      "Remote": "Yes"
+
+  - columns: [cardsymptimeofadm]
+    map:
+      "No Coronary Symptoms": "No Symptoms"
+
+  - note: >
+      Surgical approach. Both notebooks used this grouping; the mini/partial
+      variants are too sparse to stand alone in either cohort.
+    columns: [opapp]
+    map:
+      "Full conventional sternotomy": "Sternotomy"
+      "Partial sternotomy": "Sternotomy"
+      "Transverse sternotomy (includes clamshell)": "Sternotomy"
+      "Limited (mini) thoracotomy, right": "Thoracotomy"
+      "Limited (mini) thoracotomy, left": "Thoracotomy"
+      "Limited (mini) thoracotomy, bilateral": "Thoracotomy"
+      "Right thoracotomy": "Thoracotomy"
+      "Left thoracotomy": "Thoracotomy"
+      "Bilateral thoracotomy": "Thoracotomy"
+      "Percutaneous": "Minimally invasive"
+      "Port access": "Minimally invasive"
+      "Thoracoabdominal incision": "Other"
+      "Sub-xiphoid": "Other"
+      "Sub-costal": "Other"
+      "Right or left parasternal incision": "Other"
+
+  - columns: [cnstrokp]
+    map:
+      "Yes, ischemic": "Yes"
+      "Yes, embolic": "Yes"
+      "Yes, hemorrhagic": "Yes"
+      "Yes, undetermined type": "Yes"
+
+  - columns: [coprevlv]
+    map:
+      "Yes, surgical": "Yes"
+      "Yes, transcatheter": "Yes"
+
+  - columns: [deepsterninf]
+    map:
+      "Yes, within 30 days of procedure": "Yes"
+      "Yes, >30 days after procedure but during hospitalization for surgery": "Yes"
+      "Yes, >30 days after procedure but during initial hospitalization": "Yes"
+
+  - note: "'Emergent Salvage' is a severity step above 'Emergent', kept distinct."
+    columns: [status]
+    map: {}
+
+  - columns: [cplegiatype]
+    map:
+      "Crystalloid": "Other-Crystalloid"
+      "Other": "Other-Crystalloid"
+
+  - columns: [ocpulthromdis]
+    map:
+      "Yes, Acute": "Acute"
+      "Yes, Chronic": "Chronic"
+
+  - note: >
+      Incidence of cardiac surgery. Re-operation number beyond the first is
+      sparse in both cohorts; the ordinal in conf/variable_types.yaml keeps the
+      first/re-op distinction.
+    columns: [incidenc]
+    map:
+      "NA - Not a cardiovascular surgery": "NotACardiacSurgery"
+
+  - columns: [abxselect, abxtiming]
+    map:
+      "Exclusion": "NotApplicable"
+
+  - columns: [hitanti]
+    map:
+      "Not Applicable": "NotApplicable"
+
+  - note: >
+      In-hospital mortality. The two registries have COMPLETELY DISJOINT label
+      sets -- Cohort1 records a plain No/Yes, Cohort2 records the discharge
+      disposition in full. Without this map the cohorts share no level, and
+      `mortality_anytype` silently collapses to the 30-day field alone in
+      Cohort2 (measured: 3.23% instead of 3.5%).
+
+      Only "Died in hospital" is an in-hospital death. A patient discharged
+      alive who died later, or who was discharged to hospice, did not die in
+      hospital -- the 30-day field carries those, and `mortality_anytype` is
+      the union of the two.
+    columns: [mortality_inhospital]
+    map:
+      "Died in hospital": "Yes"
+      "Discharged Alive, last known status alive (other than Hospice)": "No"
+      "Discharged Alive, died after discharge": "No"
+      "Discharged to Hospice": "No"

@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Data and results never belong in this repository.
+data/
+results/
+results_v2/
+outputs/
+logs/
+*.parquet
+*.joblib
+
+# Third-party code fetched by scripts/, not redistributed.
+external/

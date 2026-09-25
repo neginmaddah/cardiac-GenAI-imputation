@@ -1,0 +1,116 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Variable taxonomy and target definitions.
+# Paper section: Methods - "Dataset and Variable Taxonomy".
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Column-type classification ─────────────────────────────────────────────
+# Applied in this order; the first match wins. A column with <=1 distinct value
+# is dropped from all three groups (constant / all-null).
+typing:
+  cat_max: 10        # an integer-like column with <= this many uniques is multiclass
+  cat_frac: 0.005    # ... or whose unique ratio (n_unique / n_non_null) is <= this
+  eps: 1.0e-9        # tolerance for "is this value integer-like?"
+  # binary  := exactly 2 distinct values
+  # multiclass := numeric & integer-like & n_unique <= cat_max
+  #             | numeric & unique_ratio <= cat_frac
+  #             | non-numeric (any cardinality)
+  # continuous := numeric, everything else
+
+# ── Endpoints ──────────────────────────────────────────────────────────────
+targets:
+  binary:
+    # Labels are the clinical names used in the manuscript, not abbreviations:
+    # they are the panel titles of Figure 4 and the row labels of every
+    # per-endpoint table, so a missing entry shows a reader the raw column name.
+    afibproc:          { label: "Post-operative Atrial Fibrillation",  analysed: true }
+    complics:          { label: "Any Major Post-operative Complication", analysed: true }
+    cpvntlng:          { label: "Prolonged Ventilation (>24 h)",    analysed: true }
+    mortality_anytype: { label: "Any Mortality",                 analysed: true,
+                         derived: "max(mortality_inhospital, mt30stat)" }
+    # Reviewer 1 comment 4 directed that this endpoint not contribute to
+    # conclusions about which method performs better. It yields 1-5 positive
+    # test cases per split (5 in Cohort1, 1 in Cohort2), so a single patient moves
+    # balanced accuracy by up to 0.5 -- larger than the entire between-method
+    # spread on the well-powered endpoints. Reported in Supplementary Note 1
+    # only. Removing it reverses the pooled binary result (Baseline 8th -> 1st
+    # of 9); leave-one-endpoint-out across all four endpoints and two metrics
+    # shows ONLY this endpoint changes the answer, which is what makes the
+    # exclusion principled rather than outcome-driven. See the revision notes.
+    unrespstat:        { label: "Unresponsive Status",            analysed: false,
+                         report_in: "supplementary_note_1" }
+
+  continuous:
+    # `losas` was RETIRED on 2026-09-10. The two registries put different
+    # quantities under that name and v1 pooled them as one endpoint:
+    #   Cohort1   `losas`                                  -> days from ADMISSION TO SURGERY
+    #   Cohort2 `losas (days from admission to discharge)` -> TOTAL length of stay
+    # Evidence: 56% of Cohort1 SURVIVORS have losas = 0, which is impossible for any
+    # post-surgical stay; the zero-rate is 84.6% for elective admissions versus
+    # ~10% for ED/transfer, and the median runs 0 (elective) -> 5 (urgent).
+    # Cohort2 has ~0.3% zeros throughout. Cohort1's field is therefore PRE-operative
+    # and is not an endpoint at all; Cohort1 carries no total-LOS field (the export
+    # has no admission, surgery or discharge date), so the two cannot be
+    # reconciled. Dropped from both cohorts rather than reported per cohort,
+    # because the Cohort2 arm replicates the Cohort1 pipeline and a differently
+    # defined endpoint replicates nothing.
+    icuinhrs: { label: "Initial ICU Hours",            analysed: true,  timing: post_operative }
+    # Promoted 2026-09-10 to replace `losas`. The only other continuous
+    # post-operative field in either export, and the only one comparable across
+    # cohorts (median 60 vs 55, ratio 1.09). Missingness is STRUCTURAL, not
+    # sporadic: observed in 100% of records with ppefmeas == Yes and 0% with
+    # ppefmeas == No, i.e. "no post-operative echo was performed". `ppefmeas` is
+    # held out of the predictor set, so it cannot leak the missingness pattern.
+    ppef:     { label: "Post-Operative Ejection Fraction", analysed: true, timing: post_operative }
+    # Constructed endpoint: set to 0 where icureadm == 0, on the reading that no
+    # ICU readmission means no additional ICU time. In Cohort2 only 167 records
+    # carry a directly observed value and the rule supplies 3,687 structural
+    # zeros (95.7% zero); in Cohort1 10,144 are observed directly (96.8% zero).
+    # `icureadm` is in the uniformly excluded set and is never a predictor, so
+    # the rule introduces no leakage.
+    icuadhrs: { label: "Additional ICU Hours",         analysed: true,  timing: post_operative,
+                construct_zero_when: { icureadm: 0 } }
+    # Intra-operative durations. 46 of Cohort1's 167 predictors (28%) and 56 of
+    # Cohort2's 182 (31%) are intra-operative fields fixed during the same
+    # operation, so these two are CONTEMPORANEOUS with, not antecedent to,
+    # their predictors. Round 3 moved them to the supplement and reports them
+    # as within-operation association rather than pre-operative prediction.
+    # This affects the interpretation of their absolute R2/RMSE only, never the
+    # between-imputer comparison (the predictor matrix is frozen across arms).
+    # Supplementary Table S13 lists the fields.
+    perfustm: { label: "Cardiopulmonary Bypass Time", analysed: false, timing: intra_operative,
+                report_in: "supplementary_figures_S5_S6" }
+    xclamptm: { label: "Aortic Cross-Clamp Time",     analysed: false, timing: intra_operative,
+                report_in: "supplementary_figures_S5_S6" }
+
+  # Endpoints analysed in earlier rounds but not in the current manuscript.
+  # `icureadm` is now in the uniformly excluded set and is never a predictor
+  # or a target, but frozen round-1 artifacts (PaperFiguresData/
+  # prediction_review_metrics.csv) still key rows on it, so its display label
+  # is retained for those readers.
+  legacy:
+    icureadm: { label: "ICU Readmission", analysed: false, retired_after: "round 1" }
+
+# ── Leakage control (Supplementary Table S6) ───────────────────────────────
+# Every field below is removed from the predictor matrix for EVERY target, so
+# that the matrix is frozen and identical across all nine prediction arms.
+# Outcome fields are additionally absent from the imputation matrix entirely,
+# which is why imputation being transductive cannot leak target information.
+excluded_from_predictors:
+  # the 9 modelled endpoints plus the raw mortality fields that build the composite
+  #
+  # NOTE: `mortality_anytype` is a modelled binary endpoint and belongs here on
+  # the merits, but it is listed under `other_outcomes` below instead. That is
+  # deliberate: Supplementary Table S6 derives each variable's printed Category
+  # from which group it sits in, so moving it changes one published cell from
+  # "Post-operative complication / status" to "Binary outcome". The union of
+  # these groups -- which is what every exclusion actually uses -- is identical
+  # either way. Flagged for the author rather than silently corrected.
+  endpoints: [perfustm, xclamptm, losas, icuinhrs, icuadhrs,
+              icureadm, afibproc, complics, unrespstat,
+              mortality_inhospital, mt30stat]
+  # discharge anticoagulation status: multiclass post-operative fields
+  discharge_medication: [dcasa, dcadp, dccoum, dcothanticoag]
+  # further post-operative outcome fields never used as targets
+  other_outcomes: [ppef, coprebld, coprevlv, copreoth, coprenon,
+                   csepsis, cnstrokp, cpvntlng, crenfail,
+                   mortality_anytype]   # see the note above

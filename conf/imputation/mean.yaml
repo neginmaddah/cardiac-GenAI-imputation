@@ -1,0 +1,5 @@
+# Naive baseline: column mean for continuous, modal category for binary.
+# Quantifies the incremental value of the more sophisticated models.
+# Deterministic -> always K=1.
+method: mean
+params: {}

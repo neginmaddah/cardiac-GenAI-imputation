@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Inferential testing. ONE implementation, replacing four divergent copies
+# (one of which omitted the Holm running-maximum step and so reported
+# non-monotonic adjusted p-values).
+# Paper section: Methods, embedded at the end of "Post-Operative Adverse
+# Outcome Prediction".
+# ─────────────────────────────────────────────────────────────────────────────
+
+alpha: 0.05
+
+omnibus:
+  test: friedman
+  # Friedman and Wilcoxon both assume the SAME units across arms. Incomplete
+  # blocks must be dropped BEFORE the test, otherwise the "mean over arms"
+  # silently compares different sets of units. This is enforced, not optional.
+  require_complete_blocks: true
+
+pairwise:
+  test: wilcoxon_signed_rank
+  correction: holm_bonferroni
+  running_max: true       # enforce monotonicity of adjusted p-values
+  # Only run when the omnibus test rejects.
+  gate_on_omnibus: true
+
+# ── Paired block definitions ───────────────────────────────────────────────
+# A block is the unit that is paired across imputer arms. Getting the block key
+# wrong is the single easiest way to produce a wrong answer here.
+blocks:
+  fidelity:
+    key: [cohort, design, alpha, feature]
+    # Pooling across cohorts is deliberate: it is the cross-cohort fidelity
+    # ranking that Results 2.1/2.2 report.
+  prediction_uniform:
+    key: [cohort, target, alpha, split_seed]
+  prediction_injected:
+    # Results 2.5 pools over cohort x design x alpha x target x split, which is
+    # what gives it the power to resolve individual pairs -- 108 blocks for
+    # binary and 180 for continuous. These are the ONLY pairwise claims the
+    # paper makes.
+    key: [cohort, design, alpha, target, split_seed]
+    expected_blocks: { binary: 108, continuous: 180 }
+
+# ── Tripwires ──────────────────────────────────────────────────────────────
+# Each of these caught a real error that had reached a submitted draft. They
+# are assertions, not advice.
+assertions:
+  # A metric column empty for some targets fails silently. `rmse` is populated
+  # only for the two z-scored continuous targets; the other three use a
+  # log1p/RMSLE transform and leave it NaN. A groupby().mean() then analysed
+  # 2 of 5 outcomes and reported it as all five (54 blocks instead of 180).
+  # ALWAYS use rmse_z for continuous prediction.
+  continuous_metric: rmse_z
+  # After any groupby, assert the number of distinct targets and blocks equals
+  # what is expected. A block count is the cheapest possible tripwire.
+  assert_block_counts: true
+  # Print positives-per-run per endpoint before pooling anything: an endpoint
+  # with 1-5 positives per split can move balanced accuracy by up to 0.5, which
+  # is larger than the entire between-method spread on well-powered endpoints.
+  assert_min_positives_per_split: 10
+  # Report effect size next to every p-value. chi2=152.24, p=6.7e-29 sits on a
+  # best-to-worst spread of 0.42%: reliable ordering, negligible magnitude.
+  require_effect_size: true
+  # A directional claim across a grid is one .sum() away from being verified.
+  # "Every method degraded from MAR to EV" was true for continuous RMSE and
+  # false for categorical accuracy.
+  verify_universal_claims: true

@@ -1,0 +1,126 @@
+# Stage 03a (v2) -- per-method-family imputation inputs.
+#
+# Paper section: Methods 4.3, Imputation of Masked Data.
+#
+# Implements the re-run plan: every imputer receives the representation it
+# actually wants, the preparation is repeated independently for each masked
+# matrix, and the two cohorts come out byte-compatible so Cohort2 is external
+# validation rather than a separately tuned model.
+#
+# ---------------------------------------------------------------------------
+# Why this stage exists at all
+# ---------------------------------------------------------------------------
+# In v1 the encoding happened inside `cvd.imputation.registry.impute()`, on the
+# fly, and was never written down. Three consequences:
+#
+#   1. Nothing could be inspected before committing GPU hours. This file's
+#      outputs are the artifact Check stop 3 gates on.
+#   2. `one_hot_with_nans` called `pd.get_dummies` on the OBSERVED values, so
+#      the one-hot width was a function of which levels happened to survive
+#      masking. Cohort1 and Cohort2 therefore handed the generative models matrices
+#      of different widths, and so did 5% vs 20% of the same cohort. Here the
+#      dummy block is built from the CODEBOOK's declared level set, so the
+#      width is fixed by the schema and identical everywhere.
+#   3. There was no ordinal concept, so ordered scales were one-hot'ed and
+#      their order destroyed -- while `snap_multiclass` snapped by numeric
+#      distance, which only makes sense IF the codes are ordered. The pipeline
+#      contradicted itself; the taxonomy below removes the contradiction.
+
+enabled: true
+
+# ---------------------------------------------------------------------------
+# The canonical scaled space
+# ---------------------------------------------------------------------------
+# One space, shared by both families, in which ground truth is stored and
+# fidelity is scored: continuous and count z-scored, everything else on its
+# integer codebook code. The generative models get a further transform on top
+# (section below) which is INVERTED before any value is scored, so the two
+# families remain comparable -- that is the whole point of scoring here.
+#
+# Every transformer is fitted on the MASKED matrix alone. A 5% unit must not be
+# able to see the statistics of the 10% unit built on top of it (the re-run plan item
+# 3); Check stop 3 asserts the fitted constants actually differ across
+# intensities.
+canonical:
+  standardize: [continuous, count]
+  ddof: 0
+  # A column with zero variance among observed cells would divide by zero.
+  # Fall back to scale 1.0 and record it, rather than emitting inf.
+  min_scale: 1.0e-9
+
+# ---------------------------------------------------------------------------
+# Per-family encoding of the model input
+# ---------------------------------------------------------------------------
+# classic = mean / knn / mice / missranger. These consume the canonical space
+# directly: trees and PMM take integer codes natively, and `bridge.R` converts
+# the declared categoricals to R factors at the boundary. No further transform.
+#
+# genai = miwae / gain / miracle / remasker. Neural imputers assume a bounded,
+# roughly uniform input. Every column below therefore lands in [0, 1], which is
+# a single checkable invariant over the whole matrix rather than four separate
+# ones -- v1 mixed QT'd continuous in [0,1] with raw integer codes up to 14 in
+# the same tensor.
+families:
+  classic:
+    binary:     passthrough      # already 0/1 by construction
+    ordinal:    int_code         # order carries signal; do NOT one-hot
+    nominal:    int_code         # -> R factor at the bridge.R boundary
+    count:      canonical        # z-scored
+    continuous: canonical        # z-scored
+
+  genai:
+    binary:     passthrough      # 0/1 is already in [0, 1]
+    # code / (K-1): monotone, exactly invertible, keeps the scale ordered and
+    # on the same footing as every other column. One-hot would throw the order
+    # away; a raw code would dominate the loss.
+    ordinal:    unit_interval
+    # Full K columns, not K-1. The block is argmax'd back, and a dropped
+    # reference level cannot be distinguished from an all-zero row.
+    nominal:    one_hot
+    count:      quantile_uniform
+    continuous: quantile_uniform
+
+  reference:
+    # The baseline arm IS the masked matrix; nothing to prepare.
+    skip: true
+
+# Naming of the one-hot columns. Indices, not labels: labels contain spaces,
+# commas and slashes that neither R factor names nor parquet round-trip
+# cleanly, and the index maps back through the codebook unambiguously.
+one_hot_template: "{column}__{index}"
+
+quantile_transform:
+  output_distribution: uniform
+  n_quantiles: 1000        # capped at the number of observed rows
+  subsample: 1000000
+  random_state: 42
+
+# Counts are imputed on the continuous path but are integers in clinical units.
+# Rounding happens on the way back out, not on the way in.
+count_postprocess: round_to_int
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+output_root: ${masking.output_root}
+inputs_dir: ${inputs.output_root}/inputs
+manifest: ${inputs.inputs_dir}/manifest.json
+# Written by the repository's own checkers (not distributed) once every gate passes. The
+# queued GPU shards block on this file (the cluster shard scripts (not distributed)), so it is the
+# literal GPU gate, not just a report.
+gate: ${inputs.inputs_dir}/READY
+# A SECOND gate for the classic family. Check stop 3 covers both families at
+# once, but the generative path has one more way to fail that no input check can
+# see -- the hyperimpute/libstdc++ import collision -- so the CPU half is
+# released as soon as the checks pass while the GPU half waits for an
+# end-to-end unit to come back. Both files are written by
+# the repository's own checkers (not distributed).
+gate_classic: ${inputs.inputs_dir}/READY_CLASSIC
+
+filenames:
+  scaled_masked: "{tag}_canonical_masked.parquet"
+  scaled_clean:  "{tag}_canonical_clean.parquet"
+  scalers:       "{tag}_scalers.json"
+  genai_masked:  "{tag}_genai_masked.parquet"
+  genai_qt:      "{tag}_genai_qt.joblib"
+  genai_meta:    "{tag}_genai_meta.json"

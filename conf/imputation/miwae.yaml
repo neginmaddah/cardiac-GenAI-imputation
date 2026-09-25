@@ -1,0 +1,72 @@
+# MIWAE: importance-weighted variational auto-encoder. The encoder maps each
+# partially observed record together with its binary mask into a Gaussian
+# latent distribution; the decoder reconstructs the complete feature vector
+# while leaving observed entries unchanged. Optimising the IWELBO yields a
+# consistent estimator under arbitrary MAR patterns.
+method: miwae
+plugin: hyperimpute
+params:
+  n_epochs: 5000
+  batch_size: 64
+  latent_size: 64
+  # HIDDEN UNITS, NOT HIDDEN LAYERS. hyperimpute's plugin_miwae assigns
+  # `self.n_hidden = n_hidden  # number of hidden units in (same for all MLPs)`.
+  # v1 ran this at 3, i.e. a THREE-UNIT hidden layer: the encoder went
+  # 483 -> 3 -> 2x64, a bottleneck narrower than the latent space it is meant to
+  # parameterise, which makes latent_size: 64 largely decorative. 128 is the
+  # value used by the MIWAE paper (Mattei & Frellsen).
+  #
+  # NOTE FOR THE METHODS TEXT: paper/main.tex:279 currently describes MIWAE as a
+  # "three-hidden-layer variational auto-encoder". That was never what ran --
+  # it was one layer of three units. The v1 the experiment log recorded the correct
+  # reading ("builds a 3-unit hidden layer"); the manuscript sentence did not.
+  n_hidden: 128
+  # Monte-Carlo importance samples drawn during training. v1 ran 200; both
+  # hyperimpute's default and the MIWAE paper use 20. The loss tiles the batch
+  # K times (`reshape([self.K * batch_size, p])`), so K is the dominant term in
+  # both runtime and VRAM -- 200 is what made this the most expensive method in
+  # the grid, at 10x the reference sampling budget.
+  K: 20
+  random_state: 42
+
+# COST AND FOOTPRINT -- EVERY NUMBER BELOW IS STALE AS OF THE n_hidden/K CHANGE.
+#
+# All of it was measured at n_hidden=3, K=200. The two terms move in opposite
+# directions and neither has been re-measured: 128 hidden units make each
+# forward pass more expensive, while K=20 cuts the tiled importance-sampling
+# term -- the one that dominates both runtime and VRAM -- by 10x. The first v2
+# GPU shard to run a MIWAE unit should report its real cost and peak memory, and
+# these numbers should then be replaced rather than scaled.
+#
+# Two v1 conclusions rest on the stale figures and must be revisited, not
+# carried over:
+#
+#   1. THE ENSEMBLE EXCEPTION (K_ensemble=2 rather than 5) is justified in
+#      Methods by MIWAE's memory footprint making five infeasible. VRAM scales
+#      with the importance-sample count, so at K=20 that justification is
+#      probably gone -- and with it a DISCLOSED deviation in the manuscript.
+#      Left at 2 pending measurement; it is the user's call, not a silent edit.
+#   2. "MIWAE'S LAST PLACE IS NOT A TUNING ARTIFACT" (Limitations, and
+#      the experiment log session 7) rests on a sensitivity check that raised
+#      n_hidden to 128 *while leaving K at 200*, found RMSE 2.061 -> 1.658 at
+#      3.2x runtime, and concluded the cost was not worth it. That runtime
+#      argument does not transfer: K=20 removes most of the cost the check was
+#      weighed against. The quality claim is also weaker than it reads -- 1.658
+#      was still measured on a 3-unit-versus-128-unit contrast at a sampling
+#      budget nothing else in the grid used.
+#
+# The original 136 GB blow-up was an unbounded-memory bug in the upstream
+# diagnostic block; wrapping it in torch.no_grad() is what brought it down, and
+# that fix is independent of these parameters.
+notes:
+  ensemble_exception: 2
+  # Measured at n_hidden=3, K=200. Retained only so the scheduler has a
+  # conservative (over-)estimate until the real numbers land: reserving too much
+  # VRAM costs concurrency, reserving too little costs a unit hours in.
+  stale_at_n_hidden_3_k_200:
+    gpu_gb: { Cohort1: 36, Cohort2: 16 }
+    # measured on v2 at n_hidden=128, K=20, K_ensemble=2
+  seconds_per_unit_k2: { Cohort1: 1329, Cohort2: 648 }
+  gpu_gb: { Cohort1: 36, Cohort2: 16 }
+  # measured on v2 at n_hidden=128, K=20, K_ensemble=2
+  seconds_per_unit_k2: { Cohort1: 1329, Cohort2: 648 }

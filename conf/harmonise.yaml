@@ -1,0 +1,342 @@
+# Stage 00 -- harmonise the two raw registry exports into one comparable schema.
+#
+# Paper section: Methods 4.1, "After cleaning and harmonization".
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The v1 analysis matrices were built by two independent notebooks that made
+# unrelated choices. The 2026-09-10 audit measured the damage: 123 of 149 shared
+# recoded columns assigned different integers to the same label, 90 shared
+# binaries were {1,2} in Cohort1 and {0,1} in Cohort2, every severity scale was
+# alphabetically encoded in Cohort1 (Trivial/Trace=4 ranked above Severe=3), and
+# Cohort2 carried an off-by-one row shift in 11 columns. See
+# the retired inputs (not distributed).
+#
+# Everything below is DECLARATIVE on purpose. If a recode is not in this file it
+# does not happen, and both cohorts go through the identical path. There is no
+# per-cohort branch anywhere in `cvd/prep/harmonise.py` except `column_aliases`,
+# which exists only because the two registries name the same field differently.
+
+enabled: true
+
+# ---------------------------------------------------------------------------
+# 1. Sources
+# ---------------------------------------------------------------------------
+sources:
+  Cohort1:   ${paths.data_dir}/data_OG/data_Cohort1_ACSD.csv
+  Cohort2: ${paths.data_dir}/data_OG/data_Cohort2_ACSD.csv
+
+outputs:
+  Cohort1:   ${paths.data_dir}/clean_Cohort1.csv
+  Cohort2: ${paths.data_dir}/clean_Cohort2.csv
+
+# Named `target_outputs`, not `targets` -- section 6 below also uses the key
+# `targets` for the endpoint definitions, and a duplicate mapping key silently
+# overwrites the first.
+target_outputs:
+  Cohort1:   ${paths.data_dir}/targets_Cohort1.csv
+  Cohort2: ${paths.data_dir}/targets_Cohort2.csv
+
+report_dir: ${paths.data_dir}/harmonise_report
+
+id_column: recordid
+
+# ---------------------------------------------------------------------------
+# 2. Column-name harmonisation
+# ---------------------------------------------------------------------------
+# Applied AFTER a global normalisation pass (strip, lowercase, collapse internal
+# whitespace and '/' to '_'). Keys are the normalised raw name, values the
+# canonical name. Only the cohort that owns the raw name is affected.
+#
+# `or_duration_hours`: Cohort1 `ortotaltime` is total OR time in MINUTES (mean 393)
+# and is NOT the same quantity as Cohort2's `or time` in HOURS (mean 4.81). The
+# comparable Cohort1 field is `skinincisiontime` (hours, mean 4.51), so that is the
+# one that survives. `ortotaltime` has no Cohort2 counterpart and is dropped by the
+# strict-intersection rule in section 5.
+column_aliases:
+  Cohort1:
+    skinincisiontime: or_duration_hours
+    racecaucasian: race_white
+    raceblack: race_black
+    raceasian: race_asian
+    racenativeam: race_am_indian
+    racnativepacific: race_pacific
+    raceother: race_other
+  Cohort2:
+    or_time: or_duration_hours
+    losas_days_from_admission_to_discharge: losas
+    in_hospital_mortality: mortality_inhospital
+    white: race_white
+    black_african_american: race_black
+    asian: race_asian
+    am_indian_alaskan: race_am_indian
+    hawaiian_pacific_islander: race_pacific
+    other: race_other
+
+# ---------------------------------------------------------------------------
+# 3. Missing-value tokens
+# ---------------------------------------------------------------------------
+# Registry strings that mean "not recorded". Converted to NaN globally, BEFORE
+# label aliasing, in every column of both cohorts. This is the one place the
+# meaning of "missing" is defined.
+#
+# NOTE: "Not Applicable" / "NA - ..." are deliberately ABSENT. Those mean the
+# question did not apply, which is information, and they are handled by
+# `structural_na` in section 4 instead.
+missing_tokens:
+  - "Unknown"
+  - "unknown"
+  - "Not documented"
+  - "Not Documented"
+  - "Not reported"
+  - "Unavailable"
+  - "Smoking status unknown"
+  - "Patient Refused"
+  - "Patient declined to disclose"
+  - "Other / Unknown / Not Available"
+  - "None (canceled case)"
+  # chrlungd: the patient HAS lung disease but its severity was not graded.
+  # That is a missing severity, not a severity level, so it cannot sit on the
+  # No < Mild < Moderate < Severe scale in conf/variable_types.yaml.
+  - "Lung disease documented, severity unknown"
+  - ""
+
+# ---------------------------------------------------------------------------
+# 4. Structural "not applicable" fills  (the re-run plan)
+# ---------------------------------------------------------------------------
+# A blank that exists because the procedure/test was never done is NOT missing
+# data. Filling it explicitly is what lets these columns survive the missingness
+# filter in section 5, and it stops the imputers being scored on cells that have
+# no ground truth to recover.
+#
+# Each rule: `when` is a {column: [values]} condition evaluated on the
+# POST-alias, POST-missing-token frame; `fill` is written into `columns` wherever
+# the condition holds AND the cell is currently null.
+# Each rule carries TWO column lists, because the fill value depends on the
+# column's storage type:
+#   `categorical` -> filled with the "NotApplicable" token, a real level
+#   `numeric_zero` -> filled with 0, and ONLY for quantities whose
+#                     not-applicable value is genuinely zero (durations, counts)
+# Numeric fields whose not-applicable value is NOT zero -- a prosthesis size, a
+# pressure gradient -- are deliberately left NaN. Writing 0 into a valve size
+# would invent a measurement.
+structural_na:
+  # Complication detail is recorded only when a complication occurred. Measured:
+  # observed 100% when complics == Yes and 0% when complics == No, in BOTH
+  # cohorts. A blank here means "that complication did not happen".
+  - name: complication_detail
+    categorical: [csepsis, cnstrokp, cpvntlng, crenfail, crendial, coprebld,
+                  coprevlv, copreoth, coprenon, creintmi, caortreint, copregft,
+                  cistdeep, deepsterninf, coprebldtim]
+    when: {complics: ["No"]}
+    fill: "No"
+
+  # ICU readmission hours. Cohort1 writes 0 for all 9,827 patients with
+  # icureadm == No; Cohort2 leaves all 3,688 blank. Pure convention difference --
+  # adopting the Cohort1 convention takes Cohort2 from 4.3% to ~99.5% observed and
+  # makes icuadhrs usable as a shared endpoint.
+  - name: icu_readmission_hours
+    numeric_zero: [icuadhrs]
+    when: {icureadm: ["No"]}
+
+  # No CABG performed -> no conduit, no anastomoses. Graft-level detail columns
+  # are handled by `graft_ladder` below, which is index-aware.
+  - name: no_cabg_performed
+    categorical: [proxtech, distanastartcond, radialartused, venouscondused,
+                  imaused, leftima, rightima, noimarsn]
+    numeric_zero: [distvein, numradda, totalnodistanastartcond]
+    when: {opcab: ["No"]}
+    fill: "NotApplicable"
+
+  # Valve / aorta detail blocks, gated on their parent procedure flag.
+  # Prosthesis sizes (vsaoimsz, vsmiimsz, vstrimsz) are NOT filled -- there is no
+  # sensible zero for "size of a valve that was not implanted".
+  - name: no_aortic_valve_procedure
+    categorical: [vsavpr, vsavsurgtype, vsavsurgbiot, aorticimplant, anlrenl,
+                  vsavroot, vsavrootoreimp, vsavrootoreimptype, vsavrootrecon]
+    when: {vsav: ["No"]}
+    fill: "NotApplicable"
+  - name: no_mitral_valve_procedure
+    categorical: [vsmvpr, mitralimplant, mitralimplantty, mitralintent,
+                  vschorpres]
+    when: {vsmv: ["No"]}
+    fill: "NotApplicable"
+  - name: no_tricuspid_valve_procedure
+    categorical: [tricuspidimplant, tricusimplantty]
+    when: {vstv: ["No"]}
+    fill: "NotApplicable"
+  - name: no_aorta_procedure
+    categorical: [archproc, archproxloc, archdisext, archdiscsite,
+                  archdistech, archbranreimp, descaortaproc, anlrenlao,
+                  trtznlrgdiam, planstaghybrid, endovasproc]
+    when: {aortproc: ["No"]}
+    fill: "NotApplicable"
+
+  # Cardiopulmonary bypass detail. A case with no bypass has zero perfusion and
+  # zero cross-clamp time, so those are genuine zeros.
+  - name: no_bypass
+    categorical: [cplegiadeliv, cplegiatype, cperftyp, cperfutil, circarr,
+                  ceroxused]
+    numeric_zero: [perfustm, xclamptm, cperftime, dhcatm, totcircarrtm]
+    when: {opcab: ["No"], vsav: ["No"], vsmv: ["No"], vstv: ["No"]}
+    when_mode: all      # every listed condition must hold
+    fill: "NotApplicable"
+
+# Index-aware ladder: for a family of repeated-measure columns `<stem><NN>`, a
+# blank at index k means "this patient had fewer than k of these". The count
+# column is authoritative; where it is itself null we fall back to the highest
+# index that carries a value.
+graft_ladder:
+  count_column: totalnodistanastartcond
+  fill: "NotApplicable"
+  families: [cab, cabconduit, cabdistpos, cabdistsite, cabendart,
+             cabproximalsite]
+  indices: ["01", "02", "03", "04", "05", "06", "07"]
+
+# ---------------------------------------------------------------------------
+# 4b. Row exclusions
+# ---------------------------------------------------------------------------
+# Applied after label aliasing (so the canonical label is in place) and BEFORE
+# the structural fill and any missingness measurement, so a dropped record never
+# influences a column's retention.
+#
+# v1 applied this filter mid-notebook, at different points in each cohort, and
+# in Cohort2 the drop happened *before* the positional column overwrite that
+# caused the off-by-one -- which is precisely how a one-row drop corrupted a
+# third of the cohort. Order matters here.
+row_filters:
+  - name: not_a_cardiac_surgery
+    column: incidenc
+    exclude_values: ["NotACardiacSurgery"]
+    # Keeps NaN: a record with unrecorded incidence is not evidence that the
+    # operation was non-cardiac.
+    keep_null: true
+
+# ---------------------------------------------------------------------------
+# 5. Column selection
+# ---------------------------------------------------------------------------
+# Strict intersection: a column is retained only if it is present in BOTH
+# cohorts and passes the missingness threshold in BOTH. Applied AFTER section 4,
+# so structural blanks no longer count against a column.
+#
+# `max_missing_fraction` is set at CHECK STOP 1a from the post-fill histogram
+# written to `report_dir/missingness_histogram.csv`. The v1 value was 0.61,
+# computed before any structural fill and independently per cohort.
+selection:
+  mode: strict_intersection
+  # CHECK STOP 1a, resolved 2026-09-10: a column is kept only if it is at least
+  # 50% observed in BOTH cohorts. Yields 178 predictors (v1 was 167 Cohort1 / 182
+  # Cohort2), plus the held-out outcome columns and `recordid`.
+  #
+  # The band immediately above this line is mostly one-site fields -- meddoac,
+  # iantifibmedgiven, livercirrhosis, aorticvalveregurg, mvregurg,
+  # tricuspidvregurg, sodium, pulmonicvalveregurg and lwstintrahemo are ~55%
+  # missing in Cohort1 but 0-2% missing in Cohort2, and inr/meldscr are the mirror
+  # image. Those are not scattered gaps, they are fields one registry does not
+  # collect, so imputing them measures something different from the rest of the
+  # benchmark. 0.50 excludes that band cleanly.
+  #
+  # The realised column count is written to `report_dir/selection.json`.
+  max_missing_fraction: 0.50
+  always_keep: [recordid]
+  # Free-text / device-model fields with no analytic value and hundreds of
+  # levels. Dropped regardless of missingness.
+  always_drop:
+    # Cohort1 `losas` is days from admission to SURGERY; Cohort2 `losas` is TOTAL
+    # length of stay. Not the same variable, not reconcilable (Cohort1 has no
+    # total-LOS field and no date columns), and Cohort1's is pre-operative. Dropped
+    # from the matrix as well as the endpoints -- see conf/variables.yaml.
+    - losas
+    - avavcompgrimplmodelao
+    - avavcompgraftimplao
+    - avavcompgrimplsizeao
+    - datavrsn
+    # STS-model predicted probabilities: outputs of another risk model, not
+    # patient data, and they would leak the endpoints.
+    - predmort
+    - preddeep
+    - predreop
+    - predstro
+    - predvent
+    - predrenf
+    - predmm
+    - pred6d
+    - pred14d
+
+# ---------------------------------------------------------------------------
+# 6. Targets  (the re-run planpost-operative endpoints only)
+# ---------------------------------------------------------------------------
+# Every POST-operative field is held out of the feature matrix and written to
+# `targets.*` keyed by recordid; prediction is then run on the analysed 3+3,
+# which match conf/variables.yaml. Intra-operative fields remain predictors.
+#
+# v1's stated rule was that perfustm/xclamptm were "contemporaneous with 28-31%
+# of the predictors". That number no longer holds: after the structural fill
+# restored the cab* graft ladder, 83 of 177 predictors (47%) are
+# intra-operative. The rule was also never applied consistently -- v1 kept 49
+# other intra-operative predictors. The rule is now simply: post-operative is
+# held out, intra-operative is not.
+#
+# `mortality_anytype` is DERIVED here rather than in the prediction code, so the
+# definition lives in one place:
+#     mortality_anytype = (mortality_inhospital == 1) | (mt30stat == 1)
+#     NaN where both are missing.
+targets:
+  # FINAL SET. 3 binary + 2 continuous.
+  #
+  # cpvntlng replaces mortality_anytype; icuadhrs, icureadm and losas are out.
+  #   icuadhrs  96.8% / 95.7% exactly zero. All nine arms return an identical
+  #             median rmse_z (spread 0.00% / 0.01%), R2 ~0 under every
+  #             objective tried, and downsampling the zero mass makes it
+  #             monotonically worse while Spearman stays pinned at 0.05-0.10.
+  #   icureadm  the yes/no reframing of icuadhrs. Carries no separating signal
+  #             in either cohort -- per-endpoint Friedman p = 0.46 / 0.78 (Cohort1)
+  #             and 0.60 / 0.10 (Cohort2), the weakest rank spreads of any binary
+  #             endpoint -- so pooling it only adds noise blocks. Out.
+  #   losas     measures a different quantity in each registry.
+  categorical: [afibproc, complics, cpvntlng]
+  continuous:  [icuinhrs, ppef]
+  derived:
+    mortality_anytype:
+      any_of: [mortality_inhospital, mt30stat]
+  # Recorded, set aside, never a predictor. Matches
+  # conf/variables.yaml:excluded_from_predictors.
+  # Held out = every POST-operative field. Intra-operative fields stay in the
+  # matrix: 83 of 177 predictors are already intra-operative (the cab* graft
+  # ladder alone is 36), so excluding perfustm/xclamptm while keeping
+  # lwsthct, lwsttemp, highintraglu, ibldprod, circarr and or_duration_hours was
+  # an unprincipled exception inherited from v1, where these two were endpoints.
+  # They are now predictors.
+  also_exclude_from_predictors:
+    - unrespstat
+    # `ppef` is post-operative ejection fraction and was already held out;
+    # `ppefmeas` records whether that post-operative measurement was taken, so
+    # it is equally post-operative and equally leaky. v1 kept it as a predictor.
+    - ppefmeas
+    - mortality_inhospital
+    - mt30stat
+    - ppef
+    - icureadm
+    - csepsis
+    - cnstrokp
+    - cpvntlng
+    - crenfail
+    - crendial
+    - coprebld
+    - coprevlv
+    - copreoth
+    - coprenon
+    - coprebldtim
+    - creintmi
+    - caortreint
+    - copregft
+    - cistdeep
+    - deepsterninf
+    - dcasa
+    - dcadp
+    - dccoum
+    - dcothanticoag
+    - icuinhrs
+    - icuadhrs
+    - afibproc
+    - complics

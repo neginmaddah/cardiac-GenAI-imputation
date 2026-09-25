@@ -1,0 +1,258 @@
+# The variable taxonomy, declared rather than inferred.
+#
+# Paper section: Methods 4.1, Variable Taxonomy.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# v1 inferred types from the data (`cvd/prep/typing.py`) and encoded categories
+# with an alphabetical sort. That produced the single worst defect in the
+# published matrices: every severity scale in Cohort1 ran
+# Mild=1, Moderate=2, Severe=3, Trivial/Trace=4 -- the LEAST severe level given
+# the HIGHEST code, because "Trivial" sorts after "Severe". Cohort2, encoded by
+# hand, ran the other way. The same variable therefore pointed in opposite
+# directions in the two cohorts.
+#
+# Nothing here is inferred. `ordinal:` gives the clinical order explicitly and
+# the encoder emits 0..K-1 in exactly that order. A column that is not listed is
+# auto-classified by the rules below, and `the repository's own checkers (not distributed)` fails if
+# an auto-classified column has more than `auto_nominal_max_levels` levels --
+# i.e. anything surprising must be declared, not silently coded.
+
+rules:
+  auto: true
+  # 2 distinct non-null levels -> binary, encoded {0,1}
+  binary_levels: 2
+  # A labelled column with more levels than this must appear in `ordinal`,
+  # `nominal` or `drop` below, or the gate fails.
+  auto_nominal_max_levels: 12
+  # Numeric columns are continuous unless listed in `count`.
+  # "NotApplicable" is a REAL level for nominal/binary columns (see
+  # conf/harmonise.yaml structural_na); it never means missing.
+  not_applicable_token: "NotApplicable"
+  # For an ordinal column, "NotApplicable" is off-scale. It is encoded as its own
+  # code BELOW the scale (-1 -> shifted to 0 with the scale starting at 1) and
+  # the column is reported as ordinal-with-absence.
+  not_applicable_is_off_scale: true
+
+# ---------------------------------------------------------------------------
+# Ordinal: clinical order, low -> high. Encoded 0..K-1 in THIS order.
+# Levels are post-alias (see conf/label_aliases.yaml).
+# ---------------------------------------------------------------------------
+ordinal:
+
+  # Regurgitation / insufficiency severity. The scale that v1 inverted.
+  vdinsufa: [Trivial/Trace, Mild, Moderate, Severe]
+  vdinsufm: [Trivial/Trace, Mild, Moderate, Severe]
+  vdinsufp: [Trivial/Trace, Mild, Moderate, Severe]
+  vdinsuft: [Trivial/Trace, Mild, Moderate, Severe]
+  prepar:   [Trivial/Trace, Mild, Moderate, Severe]
+  prepmr:   [Trivial/Trace, Mild, Moderate, Severe]
+  preptr:   [Trivial/Trace, Mild, Moderate, Severe]
+
+  # Prosthetic-valve regurgitation. "No Prosthetic Valve" is the floor.
+  prepapvl: [No Prosthetic Valve, Trivial/Trace, Mild, Moderate, Severe]
+  prepmpvl: [No Prosthetic Valve, Trivial/Trace, Mild, Moderate, Severe]
+  preptpvl: [No Prosthetic Valve, Trivial/Trace, Mild, Moderate, Severe]
+
+  avstenosis: [Mild, Moderate, Severe]
+
+  # Chronic lung disease. "Lung disease documented, severity unknown" is a
+  # missing SEVERITY, not a severity level -- it is in missing_tokens.
+  chrlungd: ["No", Mild, Moderate, Severe]
+
+  classnyh: [Class I, Class II, Class III, Class IV]
+
+  numdisv: [One, Two, Three]
+
+  alcohol: ["<= 1 drink/week", "2-7 drinks/week", ">= 8 drinks/week"]
+
+  # Time since MI, most recent first is HIGHEST risk -> order runs oldest to
+  # most recent so a larger code means a more recent infarct.
+  miwhen: [">21 Days", "8 to 21 Days", "1 to 7 Days", ">6 Hrs but <24 Hrs", "<=6 Hrs"]
+
+  # Acuity. v1 coded this alphabetically in BOTH cohorts
+  # (Elective=1, Emergent=2, Urgent=3), which puts Urgent above Emergent.
+  status: [Elective, Urgent, Emergent, Emergent Salvage]
+
+  pneumonia: ["No", Remote, Recent]
+
+  # Coronary stenosis bands.
+  circdiststenpercent: ["50-69%", ">=70%"]
+  laddiststenpercent:  ["50-69%", ">=70%"]
+  ramusstenpercent:    ["50-69%", ">=70%"]
+  rcadiststenpercent:  ["50-69%", ">=70%"]
+
+  # Carotid stenosis bands.
+  cvdstenlft: ["50% to 79%", "80% to 99%", "100%"]
+  cvdstenrt:  ["50% to 79%", "80% to 99%", "100%"]
+
+  liverchildpugh: [A, B, C]
+
+  # Number of prior cardiac operations.
+  incidenc: [First cardiovascular surgery,
+             First re-op cardiovascular surgery,
+             Second re-op cardiovascular surgery,
+             Third re-op cardiovascular surgery,
+             Fourth or more re-op cardiovascular surgery]
+
+  # Recency scales: larger code = more recent event.
+  cvawhen:         ["> 30 days", "<= 30 days"]
+  arrhythaflutter: [Remote, Recent]
+  arrhythatrfib:   [Remote, Recent]
+  arrhyththird:    [Remote, Recent]
+  arrhythvv:       [Remote, Recent]
+  pocpciin:        ["> 6 Hours", "<= 6 Hours"]
+  # After the complication_detail structural fill, "No" (no reoperation for
+  # bleeding) is a real level and is the floor of the scale.
+  coprebldtim:     ["No", Late, Acute]
+
+# ---------------------------------------------------------------------------
+# Count: already-numeric ordered integers. Left in native units so their order
+# survives; flagged so reporting does not call them continuous.
+# ---------------------------------------------------------------------------
+count:
+  - medasadis          # days of aspirin before surgery, 0-5
+  - medadpidis
+  - meddoac5dis
+  - numradda
+  - totalnodistanastartcond
+  - distvein
+  - ibdrbcu
+  - ibdffpu
+  - ibdcryou
+  - ibdplatdosepk
+
+# ---------------------------------------------------------------------------
+# Nominal by declaration: columns with an apparent order that is NOT clinical,
+# or many levels that must not be auto-rejected.
+# ---------------------------------------------------------------------------
+nominal:
+  # "Contraindicated" is not a step between No and Yes. v1 coded these
+  # Contraindicated=1 < No=2 < Yes=3 in Cohort1 and Yes=0 < No=1 <
+  # Contraindicated=2 in Cohort2 -- opposite directions for the same field.
+  - dcasa
+  - dcadp
+  - dccoum
+  - dcothanticoag
+  - medacei48
+  - medadp5days
+  - medasa
+  - medbeta
+  - medbetather
+  - medcchanther
+  - medlipid
+  - medlongactnit
+  - medothantiang
+  - medster
+  - riskdiscussed
+  - procid
+  - urgemergrsn
+  - cardsymptimeofadm
+  - admitsrc
+  - payorprim
+  - payorsecond
+  - opapp
+  - aortoccl
+  - proxtech
+  - lwsttempsrc
+  - cplegiatype
+  - cplegiadeliv
+  - medliptype
+  - medacmn
+  - diabctrl
+  - chrlungdtype
+  - heartfailtmg
+  - heartfailtype
+  - arrhythafib
+  - tobaccouse
+  - ivdrugab
+  - fivemwalktest
+  - cvdcarsten
+  - infendty
+  - famhistaorta
+  - patgenhist
+  - primindic
+  - presentation
+  - anloc
+  - antype
+  - anetilogy
+  - archdiscsite
+  - archdisext
+  - archdistech
+  - archproxloc
+  - trtznlrgdiam
+  - vdaoprimet
+  - vdtrprimet
+  - vdpuet
+  - vdmitdis
+  - vsavpr
+  - vsavprao
+  - vsavsurgtype
+  - vsavsurgtypeao
+  - vsavsurgbiot
+  - vsavrootoreimptype
+  - vsmvpr
+  - vschorpres
+  - mitralimplantty
+  - tricusimplantty
+  - valexppos
+  - valexptyp
+  - valexpet
+  - oppulm
+  - ocaraameth
+  - ocarafiblesloc
+  - ocarsubastenresty
+  - ocpulthromdis
+  - octumor
+  - infendcult
+  - noimarsn
+  - iabpwhen
+  - pocpciwhen
+  - leftima
+  - rightima
+  - cperftyp
+  - liverdis
+  - cabconduit01
+  - cabconduit02
+  - cabconduit03
+  - cabconduit04
+  - cabconduit05
+  - cabconduit06
+  - cabdistpos01
+  - cabdistpos02
+  - cabdistpos03
+  - cabdistpos04
+  - cabdistpos05
+  - cabdistpos06
+  - cabdistsite01
+  - cabdistsite02
+  - cabdistsite03
+  - cabdistsite04
+  - cabdistsite05
+  - cabdistsite06
+  - cabproximalsite01
+  - cabproximalsite02
+  - cabproximalsite03
+  - cabproximalsite04
+  - cabproximalsite05
+  - cabproximalsite06
+
+# ---------------------------------------------------------------------------
+# Continuous columns whose ranges must agree across cohorts. Check stop 1
+# compares medians and fails outside `median_ratio_band` -- this is the test
+# that catches an `or_duration_hours` hours-vs-minutes repeat.
+# ---------------------------------------------------------------------------
+range_check:
+  median_ratio_band: [0.5, 2.0]
+  # Known unit sentinels to strip before the comparison. Cohort1 records 5000 hours
+  # for a handful of ICU records (conf/cohorts/cohort1.yaml sentinel_exclusions).
+  sentinels:
+    icuinhrs: [5000]
+    icuadhrs: [5000]
+  # Physiologically impossible values observed in the raw Cohort1 export
+  # (bmi max 146.98). Set to NaN rather than clipped, so they are imputed
+  # rather than silently invented.
+  implausible:
+    bmi: {min: 12.0, max: 80.0}
+    heightcm: {min: 100.0, max: 220.0}
+    weightkg: {min: 30.0, max: 250.0}

@@ -1,0 +1,180 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Downstream outcome prediction.
+# Paper section: Methods - "Post-Operative Adverse Outcome Prediction".
+#
+# All outcome variables are excluded from the imputation feature matrix. After
+# imputing predictors the targets are merged by patient identifier and rows
+# with a missing target value are dropped.
+# ─────────────────────────────────────────────────────────────────────────────
+
+device: auto            # cuda when available, else cpu (resolved at runtime,
+                        # NOT at import time as the old config.py did)
+
+# ── Split protocol ─────────────────────────────────────────────────────────
+# Repeated randomized train/validation/test splits at the PATIENT-ENCOUNTER
+# level. NO CROSS-VALIDATION IS USED ANYWHERE IN THIS STUDY -- the letter
+# states this, so the word must not reappear in code or prose.
+split:
+  n_repeats: 3
+  seeds: [42, 314, 2718]        # one per repeat
+  test_size: 0.20               # of all records
+  val_size: 0.25                # of the remaining train+val, i.e. 0.20 overall
+  # -> 60% fit / 20% validation / 20% test
+  stratify_binary: true
+  stratify_min_class_count: 3   # below this, fall back to unstratified
+  # 3 splits x 3 intensities = 9 results per (imputer, target, cohort)
+  results_per_cell: 9
+
+min_rows: 50                    # skip a (method, target) cell below this
+
+# ── Binary endpoints ───────────────────────────────────────────────────────
+binary:
+  primary_metric: balanced_accuracy
+  also: [roc_auc, auprc, accuracy, sensitivity, specificity,
+         false_negative, false_positive, true_positive, true_negative]
+  # Inverse-prevalence class weighting.
+  scale_pos_weight: n_negative / n_positive
+  # Majority-class downsampling in the TRAINING fold only.
+  downsample:
+    enabled: true
+    max_negative_to_positive_ratio: 3.0
+    seed_offset: 1000           # derived from the split seed
+  # Threshold selected on the VALIDATION fold, then applied to test.
+  # Ties on the criterion keep the LOWEST threshold. There is no second
+  # criterion: an AU-PRC tie-breaker was specified here but was inert, because
+  # average precision does not vary over the threshold grid. AU-PRC is reported
+  # (see `also`) but is not used to rank, select or break ties anywhere.
+  threshold_selection:
+    grid: { start: 0.05, stop: 0.95, num: 19 }
+    criterion: balanced_accuracy
+    ties: lowest_threshold
+  param_grid:
+    - { n_estimators: 250, learning_rate: 0.03, max_depth: 3, min_child_weight: 1,
+        subsample: 0.85, colsample_bytree: 0.85, max_delta_step: 1 }
+    - { n_estimators: 350, learning_rate: 0.02, max_depth: 4, min_child_weight: 2,
+        subsample: 0.75, colsample_bytree: 0.75, max_delta_step: 1 }
+    - { n_estimators: 180, learning_rate: 0.05, max_depth: 2, min_child_weight: 1,
+        subsample: 0.95, colsample_bytree: 0.95, max_delta_step: 0,
+        scale_pos_weight_transform: sqrt }
+
+# ── Continuous endpoints ───────────────────────────────────────────────────
+continuous:
+  # THE metric for cross-imputer comparison and ranking. `rmse` (unstandardized)
+  # is populated for only 2 of 5 targets -- see conf/stats.yaml assertions.
+  primary_metric: rmse_z
+  also: [r2, rmsle, mphe, mae_z, rmse_original_units]
+  standardize_within_train_fold: true
+
+  # Model selection MUST use the same metric that is reported for the test
+  # fold. An earlier version selected on validation RMSLE while reporting R2;
+  # because a squared-log-error objective estimates a conditional GEOMETRIC
+  # rather than arithmetic mean, that combination systematically understated
+  # R2 on these endpoints. This is the single most consequential bug the
+  # revision fixed -- see the provenance notes.
+  select_on: same_as_reported
+
+  # Mean-consistent log-link objectives for the right-skewed, non-negative
+  # duration endpoints, plus Duan's smearing retransformation for the
+  # log1p variant.
+  objectives:
+    candidates: [poisson, tweedie, log1p_squared_error_with_duan_smearing]
+  mphe_delta: 1.0
+
+  param_grid:
+    - { objective: "reg:squarederror",    n_estimators: 250, learning_rate: 0.04,
+        max_depth: 3, min_child_weight: 1, subsample: 0.85, colsample_bytree: 0.85 }
+    - { objective: "reg:squarederror",    n_estimators: 350, learning_rate: 0.025,
+        max_depth: 4, min_child_weight: 2, subsample: 0.80, colsample_bytree: 0.80 }
+    - { objective: "reg:squarederror",    n_estimators: 180, learning_rate: 0.06,
+        max_depth: 2, min_child_weight: 1, subsample: 0.95, colsample_bytree: 0.95 }
+    - { objective: "reg:pseudohubererror", n_estimators: 300, learning_rate: 0.03,
+        max_depth: 3, min_child_weight: 1, subsample: 0.85, colsample_bytree: 0.85 }
+  rmsle_param_grid:
+    - { objective: "reg:squaredlogerror", n_estimators: 250, learning_rate: 0.04,
+        max_depth: 3, min_child_weight: 1, subsample: 0.85, colsample_bytree: 0.85 }
+    - { objective: "reg:squaredlogerror", n_estimators: 350, learning_rate: 0.025,
+        max_depth: 4, min_child_weight: 2, subsample: 0.80, colsample_bytree: 0.80 }
+    - { objective: "reg:squaredlogerror", n_estimators: 180, learning_rate: 0.06,
+        max_depth: 2, min_child_weight: 1, subsample: 0.95, colsample_bytree: 0.95 }
+
+# ── Shared XGBoost settings ────────────────────────────────────────────────
+xgboost_base:
+  tree_method: hist
+  random_state: 42
+  verbosity: 0
+  missing: .nan         # what makes the Baseline arm's native NaN handling work
+
+# ── Single-fit path (NOT the grid above) ───────────────────────────────────
+# ⚠ These are a DIFFERENT parameter set from `binary.param_grid` /
+#   `continuous.param_grid`, and the distinction is load-bearing.
+#
+#   * `single_fit` is the one-model-per-target path in cvd/prediction/xgb.py.
+#   * The `param_grid`s above are the validation-selected search the published
+#     Figures 4-9 were produced with.
+#
+#   They were separate constants in two separate files before this refactor and
+#   they must stay separate: conflating them would silently re-fit the
+#   manuscript's results with different hyperparameters.
+single_fit:
+  classifier:
+    n_estimators: 1000
+    learning_rate: 0.005
+    max_depth: 12
+    subsample: 0.5
+    colsample_bytree: 0.8
+    eval_metric: auc
+    enable_categorical: true
+  regressor:
+    n_estimators: 1000
+    learning_rate: 0.01
+    max_depth: 8
+    subsample: 0.8
+    colsample_bytree: 0.8
+    enable_categorical: true
+  # Per-target regression objective, matched to each endpoint's distribution.
+  regression_objectives:
+    # `icuinhrs` used to be routed here to reg:squaredlogerror. That path
+    # selects its configuration on validation RMSLE while the paper reports
+    # standardized RMSE and R^2, which is exactly the select-on-one-metric,
+    # report-another mismatch `select_on: same_as_reported` above forbids -- a
+    # squared-log-error objective estimates a conditional GEOMETRIC mean, so on
+    # the arithmetic scale it was losing to the sample mean: R^2 = -0.02 and
+    # rmse_z = 1.05 for every arm. Under the default squared-error objective the
+    # same cell gives R^2 = +0.15 to +0.21 and rmse_z = 0.94. The remaining
+    # entries are retired endpoints and are never fitted.
+    perfustm: "reg:pseudohubererror"
+    xclamptm: "reg:pseudohubererror"
+    losas: "reg:squaredlogerror"
+    icuadhrs: "reg:squaredlogerror"
+  default_objective: "reg:squarederror"
+  test_size_binary: 0.20
+  test_size_continuous: 0.30
+  val_size: 0.20
+  early_stopping_rounds: 50
+
+# ── The ninth arm ──────────────────────────────────────────────────────────
+# The masked dataset (both original missing values and the held-out cells
+# preserved and frozen) is fed directly to XGBoost, relying on its
+# sparsity-aware split finder. This anchors the whole comparison.
+#
+# NOTE the design asymmetry, which Methods flags because it works AGAINST the
+# paper's main finding rather than for it: imputation is transductive (an
+# imputer sees predictor rows that later become validation and test rows),
+# so all eight imputation arms enjoy that access and the Baseline does not.
+# The downstream comparison is therefore tilted towards imputation.
+baseline_arm:
+  enabled: true
+  label: Baseline
+
+# ── Parallelism ────────────────────────────────────────────────────────────
+# A default fork pool DEADLOCKED here: 27 workers parked in futex_wait, 3
+# spinning, 0 tasks completed in 54 minutes, because the parent had already
+# imported torch. A spawn-context pool with 16 workers then completed 405 tasks
+# in 4.5 minutes. Wide parallelism was the cause, not the cure.
+parallel:
+  start_method: spawn
+  max_workers: 6
+  model_n_jobs: 1       # 1 per model when workers > 1, else 6
+  # Checkpoint frequently: a driver that only writes at the very end loses
+  # everything if the job is killed or stalls.
+  checkpoint_every: 25

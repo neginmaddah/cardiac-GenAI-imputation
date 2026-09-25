@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cardiac-GenAI-imputation"
+version = "1.0.0"
+description = "Benchmark of classical and generative imputation for peri-operative cardiac-surgery registries: reconstruction fidelity and downstream outcome prediction"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Pinned to the versions the published results were produced with. Loosen them
+# if you must, but note that a different XGBoost can change split selection and
+# a different scikit-learn can change the k-NN imputer's tie handling, so
+# neither is guaranteed to reproduce a number exactly.
+dependencies = [
+    "numpy==1.26.4",
+    "pandas>=3.0",
+    "scipy>=1.17",
+    "scikit-learn>=1.8",
+    "xgboost>=3.2",
+    "matplotlib>=3.10",
+    "pyarrow",
+    "joblib",
+    "pillow",
+    "pyyaml>=6.0",
+    "pydantic>=2.13",
+]
+
+[project.optional-dependencies]
+# The four generative imputers. Wants a GPU; `torch` must match your CUDA build.
+genai = ["torch==2.6.0", "hyperimpute==0.1.17"]
+# Only needed if R is unavailable: MICE and missRanger then fall back to
+# LightGBM via miceforest, which is a DIFFERENT algorithm and not what the
+# published numbers were produced with. Prefer R.
+classic-fallback = ["miceforest", "lightgbm>=4.6"]
+
+[tool.setuptools.packages.find]
+include = ["cvd*"]
+
+[tool.setuptools.package-data]
+cvd = ["imputation/*.R"]

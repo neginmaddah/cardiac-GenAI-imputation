@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Reconstruction-fidelity scoring.
+# Paper section: Methods - "Adult Cardiac Surgery Data Fidelity Check".
+#
+# Imputed values are compared against held-out ground truth ONLY at cells that
+# were synthetically masked (status == 2). This isolates imputation error from
+# uncertainty in the source data. The mask is frozen across imputers, so
+# between-method differences reflect the algorithm alone.
+# ─────────────────────────────────────────────────────────────────────────────
+
+score_on_status: 2
+
+metrics:
+  categorical:                       # binary and multiclass together
+    primary: balanced_accuracy       # unweighted mean of per-class recalls;
+                                     # counteracts the registry's class imbalance
+                                     # and avoids overall accuracy being
+                                     # dominated by majority classes
+    also: [f1_macro, accuracy]
+    direction: higher_is_better
+  continuous:
+    primary: rmse
+    direction: lower_is_better
+    # All continuous columns are z-scored before analysis. Under z-scaling,
+    # mean-imputation has an EXPECTED RMSE of 1.0, so values below 1 indicate
+    # improvement over that naive baseline and above 1 indicate worse
+    # reconstruction. This is what makes the scale interpretable.
+    standardize: true
+
+# ── Reporting statistic ────────────────────────────────────────────────────
+# Per-feature error distributions are strongly right-skewed across imputers: a
+# small number of clinically extreme rows (implausible outlier creatinine,
+# extreme bypass times) contribute disproportionately large per-feature errors.
+# The mean is sensitive to that tail contamination; the median is not.
+primary_statistic: median
+report_statistics: [median, q1, q3, mean]
+
+# ── Bootstrap (patient-level) ──────────────────────────────────────────────
+# Frozen outputs at paths.legacy.bootstrap_dir. Not cited by any figure or
+# table in the current manuscript -- retained as round-1/2 supporting analysis.
+bootstrap:
+  n_bootstraps: 100
+  sample_fraction: 0.25
+  seed: 20260507
+  ci_quantiles: [0.025, 0.975]
+  iqr_quantiles: [0.25, 0.75]
+  plot_value: feature_metric_median

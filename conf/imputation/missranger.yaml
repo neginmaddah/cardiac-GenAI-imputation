@@ -1,0 +1,11 @@
+# MissRanger: a separate random forest per variable with missing values,
+# predicting its blanks in an iterative round-robin loop, with predictive mean
+# matching to preserve plausible numerical values.
+method: missranger
+backend: r
+params:
+  n_trees: 100
+  max_iter: 10
+  pmm_k: 3
+  random_state: 2025
+num_threads: ${oc.env:CVD_NUM_THREADS,4}

@@ -1,0 +1,63 @@
+# ReMasker: transformer-based imputer. Tokens for missing cells are replaced by
+# a learned mask embedding, a self-attention encoder contextualises each token
+# across the whole record, and the decoder reconstructs the masked positions --
+# capturing long-range feature interactions with no distributional assumption.
+# Fetched from https://github.com/alps-lab/remasker by scripts/get_remasker.sh
+# (see docs/remasker.md).
+method: remasker
+plugin: external
+params:
+  max_epochs: 200
+  encoder_depth: 6    # Methods previously stated 4 encoder / 2 decoder blocks.
+  decoder_depth: 6
+  embed_dim: 128      # Methods previously stated 32-dim.
+  drop_rate: 0.1
+  mask_strategy: random
+  seed: 42
+  # 64 in both benchmark families as of 2026-09-10, so it lives here rather
+  # than in a per-family override. See note 1 below for the evidence, and
+  # the superseded benchmark families (not distributed) for the measurements.
+  batch_size: 64
+
+# ── Three upstream findings that these values encode ───────────────────────
+#
+# 1. batch_size. 64 in BOTH benchmark families. It was believed until
+#    2026-09-10 that the uniform-holdout family used 512 -- that value appears
+#    in the original notebooks -- but the frozen matrices are not consistent
+#    with it; see the measurements in the superseded benchmark families (not distributed).
+#    512 STARVES training on cohorts this size: ~1,500-4,000 total gradient
+#    updates, against upstream's own default of 64/600 epochs which gives ~23x
+#    more steps. A smoke test on Cohort2_MAR_10 confirmed 512 collapses the model to a
+#    near-constant per-column output (balanced accuracy median exactly 0.500,
+#    RMSE 3-10x worse than GAIN, several columns at exactly 0% accuracy) --
+#    not a robustness finding, just an undertrained model. 64 fixes it
+#    (balanced_acc mean 0.450 -> 0.748, RMSE 3.284 -> 0.640) at only ~2.4x the
+#    wall-clock cost, not the ~8x naive step-count scaling suggests.
+#    Independently reproduced on Cohort1 uniform-holdout intensity 10: at 512 the
+#    imputed values within each column have ZERO variance (the model emits one
+#    constant per column) and per-feature RMSE is ~10x worse. No benchmark in
+#    this paper is affected, because neither family used 512 -- which is why
+#    the Limitations no longer carry a re-run-at-64 caveat.
+#
+# 2. max_epochs = 200 is a deliberate, measured deviation from upstream's 600,
+#    not an oversight. Measured on Cohort2_MAR_10 (mean over seeds):
+#    RMSE 0.590 @100ep, 0.645 @200ep, 0.967 @600ep -- 600 overfits badly. 100
+#    scores better on a SINGLE run but worse after ensembling (0.567 vs 0.541
+#    at matched budget), because its runs are too correlated to average well.
+#    Do not tune epochs down: the epochs/ensembling interaction is not
+#    separable. See the experiment log session 10.
+#
+# 3. `seed` does NOT reach the model. Upstream ReMasker.__init__ copies 16
+#    other arg fields but never reads args.seed, and nothing in the package
+#    calls torch.manual_seed -- exactly like `mask_strategy` and `drop_rate`
+#    above. Seeding is applied by cvd/imputation/genai.py::seed_everything()
+#    immediately before each ReMasker is constructed, which is what actually
+#    makes a run reproducible. The fields are kept here to document upstream's
+#    surface, not because they do anything.
+notes:
+  dead_params: [mask_strategy, drop_rate, seed]
+  seconds_per_unit: 417
+  # Upstream transform() is O(n^2), one row at a time. Replaced by an
+  # observed-count-grouped batching implementation; see
+  # cvd/imputation/genai.py::install_fast_transform.
+  fast_transform_chunk: 512

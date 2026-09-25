@@ -1,0 +1,23 @@
+# The v2 output tree.
+#
+# `results/`, `outcome/`, `PaperFiguresData/` and the retired artifact tree stay
+# frozen and untouched: the whole point of a parallel tree is that the published
+# artifacts must keep regenerating byte-identically while the re-run proceeds,
+# so v1 and v2 can be compared head to head at Phase 7.
+
+imputed_dir:  ${masking.output_root}/imputed
+fidelity_dir: ${masking.output_root}/fidelity
+progress_dir: ${masking.output_root}/progress
+# One file per unit-method, created with O_CREAT|O_EXCL. This is how several
+# independent sbatch shards divide 72 GPU units between them with no
+# coordination and no duplicated work -- SLURM's `gpu` QOS caps us at 4
+# concurrent jobs, so the shards have to be able to run the same command.
+claims_dir:   ${masking.output_root}/claims
+
+prediction_dir: ${masking.output_root}/prediction
+
+filenames:
+  imputed:  "{tag}_{method}.csv"
+  fidelity: "{tag}_{method}.json"
+  claim:    "{tag}_{method}.claim"
+  prediction: "{tag}_{method}_{target}.json"

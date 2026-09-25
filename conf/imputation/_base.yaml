@@ -1,0 +1,145 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Imputer registry: the ONE place method identity, ordering, display labels,
+# colours and per-variable-type encoding are defined. This replaces six
+# divergent copies that previously disagreed with each other (e.g. `missranger`
+# was labelled "MissForest (ensemble tree-based)" in one map and "MissRanger"
+# in another, from the same source JSONs).
+#
+# Paper section: Methods - "Imputation of Masked Data".
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Presentation order used by every figure and table. `baseline` is the ninth
+# arm (no imputation; XGBoost's native sparsity-aware split finder) and is not
+# an imputer, so it is excluded from imputation runs and from fidelity scoring.
+order: [baseline, mean, knn, mice, missranger, miwae, gain, remasker, miracle]
+
+families:
+  classic: [mean, knn, mice, missranger]
+  genai:   [miwae, gain, miracle, remasker]
+  reference: [baseline]
+
+# Methods with no run-to-run randomness. Ensembling them is pure waste, so K=1
+# is forced regardless of the experiment's ensemble setting.
+deterministic: [mean, knn, baseline]
+
+# GPU-resident methods; drives SLURM placement (see conf/slurm.yaml).
+gpu: [miwae, gain, miracle, remasker]
+
+registry:
+  baseline:
+    label: "Baseline"
+    long: "No imputation (XGBoost native NaN handling)"
+    family: reference
+    color: "#1F4E79"
+  mean:
+    label: "Mean/Mode"
+    long: "Mean/Mode"
+    family: classic
+    color: "#2F6F9F"
+  knn:
+    label: "KNN"
+    long: "k-Nearest-Neighbor"
+    family: classic
+    color: "#4C78A8"
+  mice:
+    label: "MICE"
+    long: "MICE"
+    family: classic
+    color: "#72A6C9"
+  missranger:
+    label: "MissRanger"
+    long: "MissRanger"
+    family: classic
+    color: "#A6CEE3"
+    # The legacy fidelity CSVs spell this "MissForest (ensemble tree-based)".
+    # Normalised on read; see `legacy_labels` below.
+  miwae:
+    label: "MIWAE"
+    long: "MIWAE (VAE-based)"
+    family: genai
+    color: "#B23A48"
+  gain:
+    label: "GAIN"
+    long: "GAIN (GAN-based)"
+    family: genai
+    color: "#D95F02"
+  remasker:
+    label: "ReMasker"
+    long: "ReMasker (transformer-based)"
+    family: genai
+    color: "#E76F51"
+  miracle:
+    label: "MIRACLE"
+    long: "MIRACLE (diffusion/energy-based)"
+    family: genai
+    color: "#F4A261"
+
+# Aliases seen in the frozen result files, normalised to the keys above on read.
+legacy_labels:
+  "Mean/Mode": mean
+  "mean": mean
+  "KNN": knn
+  "k-Nearest-Neighbor": knn
+  "MICE": mice
+  "MissRanger": missranger
+  "MissForest (ensemble tree-based)": missranger
+  "MIWAE": miwae
+  "MIWAE (VAE-based)": miwae
+  "GAIN": gain
+  "GAIN (GAN-based)": gain
+  "ReMasker": remasker
+  "ReMasker (transformer-based)": remasker
+  "MIRACLE": miracle
+  "MIRACLE (diffusion/energy-based)": miracle
+  "Baseline": baseline
+
+# ── Per-variable-type handling ─────────────────────────────────────────────
+# Declarative replacement for five divergent code paths. Before ANY imputation
+# all continuous predictors are standardized (zero mean, unit variance) using
+# statistics computed on the MASKED matrix, so the distribution seen by every
+# algorithm is identical. Record identifiers are removed from every training
+# matrix and reattached only after imputation. Categorical variables stay in
+# their native representation except where an algorithm requires otherwise.
+encoding:
+  mean:       { binary: mode_fill,   multiclass: mean_then_snap,  continuous: mean }
+  knn:        { binary: int_code,    multiclass: int_code,        continuous: standardize }
+  mice:       { binary: r_factor,    multiclass: r_factor,        continuous: pmm }
+  missranger: { binary: r_factor,    multiclass: r_factor,        continuous: pmm }
+  # The four generative methods receive multiclass one-hot encoded and
+  # continuous mapped to a uniform marginal by a quantile transform. BOTH are
+  # inverted before any value is scored.
+  miwae:      { binary: passthrough, multiclass: one_hot,         continuous: quantile_uniform }
+  gain:       { binary: passthrough, multiclass: one_hot,         continuous: quantile_uniform }
+  miracle:    { binary: passthrough, multiclass: one_hot,         continuous: quantile_uniform }
+  remasker:   { binary: passthrough, multiclass: one_hot,         continuous: quantile_uniform }
+  baseline:   { binary: passthrough, multiclass: passthrough,     continuous: passthrough }
+
+# Post-processing, applied in this order after every imputer.
+postprocess:
+  order: [invert_one_hot, snap_binary, snap_multiclass, inverse_quantile_transform]
+  binary_recode: { from: [1, 2], to: [0, 1] }
+  quantile_transform:
+    output_distribution: uniform
+    n_quantiles: min(1000, n_rows)
+    random_state: 42
+
+# ── Ensemble combination ───────────────────────────────────────────────────
+# How the K seeded members of a stochastic imputer are combined. K itself is
+# set per benchmark family in conf/experiment/*.yaml, NOT here.
+combine:
+  # The generative methods emit numeric one-hot blocks, so averaging in the
+  # model's own output space turns a dummy block into soft class scores that
+  # postprocessing then argmaxes -- a probability-level vote, not a post-hoc
+  # majority vote.
+  genai: raw_mean
+  # MICE and MissRanger return frames whose categoricals are already snapped to
+  # labels, so their members cannot be averaged the same way: mean for
+  # continuous, majority vote for binary/multiclass, ties resolved by the first
+  # member so the result stays deterministic given the seeds.
+  classic: mixed_vote
+  seeds: range          # member i uses seed = i, for i in 0..K-1
+
+# CAVEAT that Methods discloses: ensembling shrinks the imputed distribution.
+# It is applied to EVERY stochastic imputer rather than to ReMasker alone, so
+# that the cross-method comparison stays like-for-like -- ensembling one method
+# against single-draw baselines would not be a fair ranking.

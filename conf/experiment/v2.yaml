@@ -1,0 +1,68 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# The benchmark family: one configuration, shared by every imputer.
+#
+# The key is `v2` for historical reasons (it is the second, unified design);
+# the code refers to it by that name. Read it as "the benchmark".
+#
+# Grid: 2 cohorts x 2 mechanisms x 2 intensities x 8 imputers = 64 imputer-unit
+# evaluations, plus the no-imputation baseline arm, which is a pass-through.
+#
+# Everything here is constant across methods on purpose. A ranking is only
+# like-for-like if the ensemble budget, the mask and the downstream protocol
+# are identical for every arm, so the per-method `overrides` below are the
+# exceptions and each carries its reason.
+# ═════════════════════════════════════════════════════════════════════════════
+name: v2
+label: "MCAR/MNAR imputation benchmark"
+
+designs: [mcar, mnar]
+cohorts: [Cohort1, Cohort2]
+alphas: [0.05, 0.20]
+methods: [baseline, mean, knn, mice, missranger, miwae, gain, remasker, miracle]
+
+# ── Ensemble size ──────────────────────────────────────────────────────────
+# K=2 for every stochastic imputer. Deterministic methods are forced to K=1.
+#
+# The risk this carries, recorded so it is checked rather than assumed:
+# ensemble size is NOT neutral between method families. Measured at K=2 against
+# K=5, reconstruction error degrades by roughly 1-2% for the neural imputers
+# but 8-11% for the multiple-imputation ones, because the latter keep reducing
+# variance with more draws while the former plateau early. On matched units
+# that asymmetry was enough to flip an ordering. K=2 is therefore the setting
+# that most favours the neural methods, and a result obtained at K=2 is not
+# evidence about K=5. Either report at fixed K, as here, or run a
+# K-sensitivity check.
+ensemble:
+  default: 2
+
+overrides:
+  # Batch 512 starves training on matrices this size.
+  remasker: { batch_size: 64 }
+
+  # Capped by measurement, not by budget. The package default did not converge
+  # within the available compute on either cohort: per-step cost is dominated
+  # by the causal-structure regularisation rather than by row count. Fidelity
+  # was verified unchanged between this cap and 3x it, so the larger setting
+  # bought no accuracy for three times the GPU time.
+  miracle:  { max_steps: 50 }
+
+# ── Early stopping ─────────────────────────────────────────────────────────
+# MIWAE only. It is the great majority of the GPU grid at the configured epoch
+# count and training cost is linear in epochs, so it is the one lever that
+# shortens a run without changing the experimental design. Not applied to GAIN
+# (minutes for the whole grid), MIRACLE (already capped) or ReMasker (short).
+#
+# This is a CONVERGENCE criterion on the training objective, not validation
+# based model selection: there is no held-out split inside the imputer.
+early_stopping:
+  miwae:
+    patience: 50
+    min_delta: 0.0
+    # The threshold that actually bites. An improvement must beat the best so
+    # far by 0.05% of its magnitude to count; anything smaller is noise in the
+    # batch permutation and the importance samples. Without it a lucky epoch
+    # resets the counter even after the loss has plateaued, and the run goes
+    # its full budget having learnt nothing for most of it.
+    min_rel_delta: 5.0e-4
+
+frozen: false

@@ -1,0 +1,23 @@
+# Cohort 2 -- the second registry.
+#
+# Identity is deliberately absent. The benchmark needs a name, a label for the
+# figures, and (optionally) a list of fields this site must hold out beyond the
+# shared exclusions in conf/variables.yaml. Nothing else about a site is used.
+#
+# Record counts and taxonomy breakdowns are NOT asserted here. They were in the
+# version used for the paper, as a guard that the input file was the expected
+# one; that guard is specific to those two exports and would reject anyone
+# else's data, so it is gone.
+name: Cohort2
+label: "Cohort 2"
+id_column: recordid
+
+# Fields to hold out for this cohort only, on top of the shared post-operative
+# block. Leave empty unless a site records something the other does not, or
+# records it with a different meaning.
+#
+# Worth stating because it bit us: a field carrying the SAME NAME in two
+# exports but a different quantity (one site's admission-to-surgery interval
+# against another's total length of stay) cannot be reconciled and must be
+# dropped at harmonisation rather than carried as an endpoint.
+leakage_exclusions: []

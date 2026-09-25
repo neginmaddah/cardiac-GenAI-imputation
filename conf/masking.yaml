@@ -1,0 +1,80 @@
+# Stage 02 (v2) -- nested missingness injection.
+#
+# Paper section: Methods 4.2, Missing-Data Simulation.
+#
+# Implements the re-run plan: three mechanisms x three intensities per cohort,
+# 18 frozen masked matrices, with each intensity a strict superset of the one
+# below it. See cvd/missingness/nested.py for why v1's masks were not nested and
+# why its MNAR was wrong on two of the three variable types.
+
+enabled: true
+
+designs: [mcar, mnar]
+alphas: [0.05, 0.20]
+
+# Base seed. The per-unit seed is sha256(base|cohort|design) -- see
+# `cvd.missingness.nested.unit_seed`. Intensities deliberately SHARE a seed
+# because they are prefixes of a single draw; cohorts and designs do not, so the
+# three mechanisms at a given intensity are independent rather than three views
+# of one RNG stream (which is what v1's single global seed produced).
+seed: 2025
+
+# Status codes, unchanged from v1 so downstream scoring is unaffected.
+status:
+  observed: 0
+  registry_missing: 1
+  held_out: 2
+score_on_status: 2
+
+# Per-column budget: n_mask = floor(N * alpha * m0(col)), where m0 is the
+# column's EXISTING missing fraction. Unchanged from v1 and deliberately so --
+# injected missingness is proportional to how often a field is genuinely absent,
+# and a column with no registry missingness receives none. Eligible cells are
+# restricted to those actually observed, since a cell that is already missing
+# cannot be held out and scored.
+budget: proportional_to_existing
+
+params:
+  mcar: {}
+
+  mar:
+    # Each target column draws its OWN beta ~ N(0, 1/sqrt(k)) over the driver
+    # matrix, so different columns go missing for different reasons. v1 summed
+    # the first five columns of the frame, unweighted, and reused that single
+    # propensity for every target.
+    predictor_min_observed: 0.99   # a driver must be essentially complete
+    max_drivers: 40                # most-complete columns, ties broken by name
+    # Sweep of held-out AUC (median over 59 Cohort1 columns), MCAR null = 0.529:
+    #   scale 1.0 -> 0.576   2.0 -> 0.602   3.0 -> 0.614   4.0 -> 0.629
+    # 3.0 gives a clear margin over the null and still saturates nothing: v1's
+    # failure was an UNSCALED sum of five z-scores, which pinned the sigmoid at
+    # 0 or 1 for most rows.
+    logit_scale: 3.0
+
+  mnar:
+    # Branches on the DECLARED taxonomy from conf/variable_types.yaml, not on
+    # storage dtype. Every categorical here is an integer level code, so a
+    # dtype branch sends all of them down the continuous path -- that is exactly
+    # the v1 defect.
+    tail_quantile: 0.30            # continuous: both tails
+    tail_weight: 3.0
+    rare_category_weight: 3.0      # binary/ordinal/nominal: least-frequent half
+    # A numeric column with fewer distinct values than this uses the rare-level
+    # branch too. `distvein` has 8 distinct values and
+    # `totalnodistanastartcond` 6, so q30 == q70 and "in either tail" is true
+    # for 100% of cells -- weights come out uniform and MNAR degenerates to
+    # MCAR. Same defect as v1's, relocated from binary to count columns.
+    min_distinct_for_quantile: 12
+
+# ---------------------------------------------------------------------------
+# Outputs -- the v2 parallel tree. `results/` stays frozen.
+# ---------------------------------------------------------------------------
+output_root: ${paths.root}/results_v2
+masked_dir: ${masking.output_root}/masked
+status_dir: ${masking.output_root}/missing_status
+manifest: ${masking.output_root}/masked/manifest.json
+
+# {cohort}_{design}_{pct}
+filenames:
+  masked: "{tag}_masked.parquet"
+  status: "{tag}_status.parquet"

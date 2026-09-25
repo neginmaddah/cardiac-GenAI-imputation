@@ -1,0 +1,53 @@
+# Multiple imputation by chained equations, m=1 completed dataset.
+# Reference implementation is the R `mice` package via cvd/imputation/bridge.R.
+method: mice
+backend: r            # r | miceforest
+params:
+  # 5, which is mice's own package default; this was 10. With `cart` on 145
+  # factor columns each iteration is a full pass of trees, so halving the
+  # iterations halves the runtime. mice's documentation treats 5-20 as the
+  # normal range and ships 5.
+  max_iter: 5        # Methods previously stated 5 iterations; executed value is 10.
+  m: 1
+  random_state: 2025
+
+# Per-variable elementary method, assigned automatically by type/cardinality:
+# What cvd/imputation/bridge.R ACTUALLY assigns. The previous block here listed
+# a class-balance-dependent split between logreg/polyreg and cart; that split is
+# gone. Every factor gets `cart`, because logreg and polyreg fit a design matrix
+# and die on the rank deficiency the structural "NotApplicable" fill creates --
+# whole cab* families are perfectly collinear by construction (bridge.R:90-110).
+elementary_methods:
+  binary: cart                    # unordered R factor
+  nominal: cart                   # unordered R factor
+  ordinal: pmm                    # numeric, so draws are observed levels
+  count: pmm
+  continuous: pmm
+
+# Predictor matrix built by mice::quickpred rather than using all predictors,
+# so each variable's elementary model draws only on the subset meeting these
+# thresholds. Outcome variables are absent from the matrix altogether.
+#
+# mincor is 0.50, not the 0.30 recorded here before: with 178 columns a 0.30
+# threshold admits a large predictor set for every target, and `cart` -- which
+# every factor now uses -- is expensive in the number of predictors. See
+# bridge.R:72-78, which is where the value that runs is written.
+quickpred:
+  mincor: 0.50        # minimum correlation
+  minpuc: 0.25        # minimum proportion of usable cases
+
+# Stabilisers passed through to mice(); bridge.R:145-155 reads them from the
+# environment with these as the defaults.
+stabilisers:
+  ridge: 1.0e-2
+  eps: 1.0e-3
+  maxcor: 0.95
+
+# FALLBACK, and a disclosed protocol deviation. R `mice` cannot be installed in
+# this environment (the CRAN `nloptr` build needs NLopt and there is no sudo),
+# so the injected-grid runs used the `miceforest` LightGBM backend instead.
+# Keep this explicit: it is a real difference from the uniform-holdout runs.
+miceforest:
+  num_datasets: 1
+  min_data_in_leaf: 30
+  logodds_clip_eps: 1.0e-6   # upstream miceforest logodds overflows without this

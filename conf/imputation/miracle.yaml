@@ -1,0 +1,29 @@
+# MIRACLE: treats imputation as a denoising process governed by an energy
+# function, with iterative score-matching steps guided by a diffusion prior
+# and acyclicity/sparsity regularisation.
+method: miracle
+plugin: hyperimpute
+params:
+  lr: 0.001
+  batch_size: 128
+  num_outputs: 1
+  n_hidden: 64        # Methods previously stated width 32; executed value is 64.
+  reg_lambda: 0.01    # Methods previously stated lambda=1; executed value is 0.01.
+  reg_beta: 10        # Methods previously stated beta=1;   executed value is 10.
+  reg_m: 1.0
+  DAG_only: false
+  window: 20
+  seed_imputation: median
+  random_state: 42
+  # max_steps is set PER BENCHMARK FAMILY, not here -- see
+  # conf/experiment/{the superseded uniform-holdout family,injected}.yaml.
+  #
+  # 800 is the canonical / intended full-budget value and is what the
+  # uniform-holdout benchmark used. It is impractically slow in the shared GPU
+  # environment: it timed out at the 40-minute cap without finishing even on
+  # the smallest cohort (Cohort2), and per-step cost appears dominated by the DAG
+  # regularisation rather than by row count. The injected grid therefore caps
+  # it at 50, VERIFIED not to change fidelity between 50 and 150 steps.
+  # See the experiment log sessions 3-6.
+notes:
+  seconds_per_unit: 774

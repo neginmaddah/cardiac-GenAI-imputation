@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Every filesystem location in the project. Nothing outside this file may
+# contain a literal path.
+#
+# Fidelity reporting uses the current version-2 artifacts. Legacy prediction
+# and supplementary paths below remain pending migration by the other paper
+# tracks; their presence does not make them valid sources for the manuscript.
+# ─────────────────────────────────────────────────────────────────────────────
+
+root: ${oc.env:CVD_ROOT,.}          # resolved to the repo root when unset
+
+# Superseded version-1 artifacts. Retained as a record, never a source for the
+# manuscript; see the README in that directory.
+v1_archive: ${paths.root}/outcome/v1_archive_superseded
+
+# ── Inputs (patient-level; gitignored, never committed) ─────────────────────
+data_dir: ${paths.root}/data
+
+# Pre-computed masked and imputed matrices for the uniform-holdout benchmark.
+# These were produced by the original notebooks (R for MICE/MissRanger, GPU for
+# the four generative methods) and are frozen inputs to the prediction stage.
+# Their filenames are irregular; see the frozen-artifact naming table (not distributed).
+uniform_inputs:
+  Cohort1:   ${paths.data_dir}/uniform/Cohort1
+  Cohort2: ${paths.data_dir}/uniform/Cohort2
+
+# ── Paper sources and artifacts ────────────────────────────────────────────
+# Where generated artifacts go. One directory, git-ignored, so a run
+# never writes into the source tree.
+paper:
+  dir:              ${paths.root}/outputs
+  retired_dir:      ${paths.root}/outputs/_unused
+  figures_dir:      ${paths.paper.retired_dir}/figures
+  supp_figures_dir: ${paths.paper.retired_dir}/supp_figures
+  figures_v2_dir:   ${paths.paper.dir}/figures
+  diagnostics_dir:  ${paths.paper.figures_v2_dir}/diagnostics
+  tables_dir:       ${paths.paper.dir}/tables
+  supp_tables_dir:  ${paths.paper.tables_dir}
+  pdf_dir:          ${paths.paper.dir}
+legacy:
+  # Compatibility aliases for fidelity readers; current results only.
+  fidelity_summary_dir: ${paths.root}/results_v2/fidelity_tables
+  fidelity_outcome_dir: ${paths.root}/results_v2/fidelity_tables
+  bootstrap_dir:        ${paths.root}/outcome/bootstrap_fidelity_100_merged
+
+  # Uniform-holdout benchmark: per-cohort prediction outputs (Figures 4-9, S1-S4).
+  prediction:
+    Cohort1:   ${paths.root}/results/uniform/Cohort1
+    Cohort2: ${paths.root}/results/uniform/Cohort2
+
+  # Injected MAR/EV benchmark (Supplementary Tables S8-S11).
+  injected:
+    dir:            ${paths.root}/results/injected
+    fidelity:       ${paths.legacy.injected.dir}/fidelity
+    imputed:        ${paths.legacy.injected.dir}/imputed
+    masked:         ${paths.legacy.injected.dir}/masked
+    missing_status: ${paths.legacy.injected.dir}/missing_status
+    prediction:     ${paths.legacy.injected.dir}/prediction/results
+    # Ensemble-size variants. ALL THREE are load-bearing, not scratch:
+    #   _single_draw/  read by the cross-design comparison, so the uniform
+    #                  (K=1) and injected (K=5) families are compared at
+    #                  MATCHED ensemble size. Methods requires this.
+    #   _k2/ and _k5/  BOTH needed: the repository's own checkers (not distributed)'s
+    #                  `ensemble_penalty()` computes the disclosed
+    #                  K=2-vs-K=5 accuracy penalty per method (GAIN 0.8%,
+    #                  ReMasker 3.2%, MICE 9.3%, MissRanger 10.6%) by
+    #                  differencing the two. Deleting either makes those
+    #                  numbers unregenerable -- they are the evidence that
+    #                  K=2 is NOT neutral across methods, which is why the
+    #                  grid runs at K=5.
+    #
+    # Only the small fidelity JSONs are required. The bulk imputed CSVs under
+    # imputed/_k2/ and imputed/_broken_batch512/ were removed.
+    single_draw:    ${paths.legacy.injected.fidelity}/_single_draw
+    k2:             ${paths.legacy.injected.fidelity}/_k2
+    k5:             ${paths.legacy.injected.fidelity}/_k5
+
+  # The v2 continuous-prediction grid that the published Figures 8/9/S5/S6
+  # were rendered from (see the provenance notes).
+  # Archived with the rest of v1: `paper/` is the Overleaf source tree and holds
+  # no data. These keys resolve into the archive so the dormant readers still
+  # work and nothing points a live path at superseded numbers.
+  continuous_v2:
+    grid:     ${paths.v1_archive}/paper/continuous_v2/continuous_v2_full_grid.csv
+    icuadhrs: ${paths.v1_archive}/paper/continuous_v2/icuadhrs_v3_grid.csv
+
+# ── New runs ───────────────────────────────────────────────────────────────
+runs_dir: ${paths.root}/runs
+# Layout: runs/{experiment}/{cohort}/{design}/{alpha}/{stage}/...
+run_layout: "{experiment}/{cohort}/{design}/a{alpha_pct}"
+
+# ── External third-party (fetched by scripts/, not redistributed) ─────────
+external:
+  remasker: ${paths.root}/external/remasker

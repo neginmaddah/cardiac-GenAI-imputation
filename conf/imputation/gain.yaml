@@ -1,0 +1,15 @@
+# GAIN: GAN-based imputer with a hint mechanism. A conditional generator
+# replaces missing cells with noise-driven proposals conditioned on the
+# observed covariates while a discriminator labels each entry real or
+# synthetic; a partially revealed hint vector stabilises training.
+method: gain
+plugin: hyperimpute
+params:
+  n_epochs: 5000
+  batch_size: 32      # Methods previously stated 128; executed value is 32.
+  hint_rate: 0.05     # Methods previously stated 0.9;  executed value is 0.05.
+  loss_alpha: 500     # Methods previously stated 100;  executed value is 500.
+# Cheapest method in the grid: ~15 s per unit regardless of cohort.
+# Ensembling penalty at K=2 is only ~0.8%, the smallest of any method.
+notes:
+  seconds_per_unit: 15

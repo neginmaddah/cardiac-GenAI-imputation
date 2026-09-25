@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Holdout designs.
+# Paper section: Methods - "Missing-Data Simulation".
+#
+# TERMINOLOGY. The manuscript retired the "MNAR" label for the value-dependent
+# design: "An earlier version of this work described the covariate-driven
+# design as MNAR; that label was incorrect, and we have set it aside." The
+# three designs are now named `uniform`, `mar` and `ev` (extreme-value), which
+# is what this config and all code use. The stored result files predate the
+# rename and still carry the old tokens, so `legacy_alias` maps between them.
+# Result files are NOT renamed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Both cohorts retain their native registry missingness unchanged. On top of
+# that, a controlled fraction of ORIGINALLY OBSERVED cells is held out to give
+# ground truth for fidelity scoring. The per-column budget is identical in all
+# three designs -- n_mask(j) = floor(N * alpha * m0(j)) -- so the designs differ
+# only in WHICH cells are selected, never in how many.
+alphas: [0.05, 0.10, 0.20]
+alpha_labels: { 0.05: "5%", 0.10: "10%", 0.20: "20%" }
+seed: 2025
+
+# Frozen-mask design: for each (cohort, design, alpha) the mask is generated
+# once and held fixed across all imputers, so differences are attributable to
+# the imputer alone.
+frozen_mask: true
+
+# Per-cell status matrix.
+status_codes:
+  observed_retained: 0   # originally observed, kept as imputer input
+  registry_missing: 1    # originally missing in the registry
+  held_out: 2            # held out; the ONLY cells fidelity is scored on
+score_on_status: 2
+
+designs:
+  uniform:
+    legacy_alias: MCAR
+    label: "Uniform holdout"
+    description: >
+      Cells drawn uniformly at random from the rows the registry actually
+      observed. NOTE: this is deliberately NOT called MCAR. The eligibility set
+      is itself constrained to observed cells and registry missingness is
+      clinically structured, so the realized mask inherits a not-at-random
+      character -- verified empirically (per-row holdout count correlates with
+      per-row registry-missing count, Spearman rho -0.245 to -0.492 in Cohort1 and
+      -0.192 to -0.364 in Cohort2, p << 1e-30; a KS eligibility-leakage test
+      rejects MCAR for 7-11% of column-driver pairs in Cohort1 and 19-26% in
+      Cohort2, 5x-25x the MCAR null).
+
+  mar:
+    legacy_alias: MAR
+    label: "Injected MAR"
+    description: >
+      Covariate-driven selection. MAR in the Rubin sense: the score depends
+      solely on observed covariates and never on the value being removed.
+    n_predictors: 5          # up to 5 other numeric columns drive selection
+    predictor_min_observed: 0.90   # candidate drivers must be >90% observed
+    # In practice the first five such columns of the analysis matrix (excluding
+    # the target column itself), so the SAME five drive every target column.
+    score: logistic_on_standardized_sum
+
+  ev:
+    legacy_alias: MNAR       # stored filenames say MNAR; the paper says EV
+    label: "Injected extreme-value"
+    description: >
+      Value-dependent selection: the probability a cell is removed depends on
+      the recorded value. Models the clinical pattern in which extreme results
+      are disproportionately absent because the test was not ordered or the
+      result not filed. Applied to the analysis matrix as stored, in which
+      categorical variables carry integer level codes.
+    tail_quantile: 0.30      # cells at or below q30, or at or above q70 ...
+    tail_weight: 3.0         # ... get 3x the selection weight of a mid cell
+    # For categorical columns the same 3x weight goes to categories whose
+    # frequency is below the column's median category frequency. CAUTION when
+    # interpreting: this rule preferentially masks the RAREST category, which
+    # rebalances the evaluated cells and makes categorical accuracy IMPROVE
+    # from mar to ev in 14/16 method-cohort cells while continuous RMSE
+    # worsens in 14/16. The "every method degrades" claim holds for RMSE only.
+    rare_category_weight: 3.0
+
+# Injected cells are a minority of every masked matrix -- by construction
+# alpha/(1+alpha) of all missing entries, i.e. 4.7% at alpha=0.05 rising to
+# 16.7% at alpha=0.20 -- so the character of the data each imputer receives is
+# set mainly by the registry's own missingness, not by the injected increment.

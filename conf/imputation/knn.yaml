@@ -1,0 +1,9 @@
+# Uniform-weight k-nearest-neighbours imputer on the mixed feature space.
+# Categorical levels are first mapped to integer codes so Euclidean distances
+# can be computed; imputed codes are then rounded, clipped to the valid range
+# and decoded back to factor labels.
+# Deterministic -> always K=1.
+method: knn
+params:
+  n_neighbors: 3      # Methods previously stated k=5; the executed value is 3.
+  weights: uniform
